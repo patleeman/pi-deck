@@ -53,27 +53,27 @@ code {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Markdown styling */
+/* Markdown styling - TUI compact */
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3 {
-  margin-top: 1em;
-  margin-bottom: 0.5em;
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
   font-weight: 600;
 }
 
 .markdown-content p {
-  margin-bottom: 0.5em;
+  margin-bottom: 0.25em;
 }
 
 .markdown-content ul,
 .markdown-content ol {
-  margin-left: 1.5em;
-  margin-bottom: 0.5em;
+  margin-left: 1em;
+  margin-bottom: 0.25em;
 }
 
 .markdown-content li {
-  margin-bottom: 0.25em;
+  margin-bottom: 0;
 }
 
 .markdown-content a {
@@ -82,9 +82,9 @@ code {
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid #3a3a3a;
-  padding-left: 1em;
-  margin: 0.5em 0;
+  border-left: 1px solid #3a3a3a;
+  padding-left: 0.5em;
+  margin: 0.25em 0;
   color: #888888;
 }
 

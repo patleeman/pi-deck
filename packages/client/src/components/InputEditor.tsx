@@ -1,5 +1,4 @@
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { Send, Square, Image, X } from 'lucide-react';
 import type { ImageAttachment } from '@pi-web-ui/shared';
 
 interface InputEditorProps {
@@ -131,14 +130,15 @@ export const InputEditor = forwardRef<InputEditorHandle, InputEditorProps>(funct
   };
 
   return (
-    <div className="flex-shrink-0 border-t border-pi-border bg-pi-surface p-4">
+    <div className="flex-shrink-0 border-t border-pi-border bg-pi-surface px-3 py-1.5 font-mono text-sm">
       {/* Image previews */}
       {images.length > 0 && (
-        <div className="flex gap-2 mb-3 flex-wrap">
+        <div className="flex gap-1 mb-1 flex-wrap items-center">
+          <span className="text-pi-muted">attached:</span>
           {images.map((img, index) => (
             <div
               key={index}
-              className="relative group w-16 h-16 rounded-lg overflow-hidden border border-pi-border"
+              className="relative group w-10 h-10 overflow-hidden border border-pi-border"
             >
               <img
                 src={`data:${img.source.mediaType};base64,${img.source.data}`}
@@ -147,23 +147,26 @@ export const InputEditor = forwardRef<InputEditorHandle, InputEditorProps>(funct
               />
               <button
                 onClick={() => removeImage(index)}
-                className="absolute top-0.5 right-0.5 p-0.5 rounded-full bg-pi-bg/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-pi-error"
+                className="absolute inset-0 bg-pi-bg/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-pi-error"
               >
-                <X className="w-3 h-3" />
+                ×
               </button>
             </div>
           ))}
         </div>
       )}
 
-      <div className="flex gap-3 items-end">
+      <div className="flex gap-2 items-end">
+        {/* Prompt indicator */}
+        <span className="text-pi-accent py-1">&gt;</span>
+
         {/* Image upload button */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex-shrink-0 p-2 rounded-lg border border-pi-border hover:border-pi-accent/50 hover:bg-pi-bg transition-colors text-pi-muted hover:text-pi-accent"
+          className="text-pi-muted hover:text-pi-accent py-1"
           title="Attach image"
         >
-          <Image className="w-5 h-5" />
+          [img]
         </button>
         <input
           ref={fileInputRef}
@@ -181,11 +184,7 @@ export const InputEditor = forwardRef<InputEditorHandle, InputEditorProps>(funct
 
         {/* Textarea */}
         <div
-          className={`flex-1 rounded-lg border bg-pi-bg transition-colors ${
-            isStreaming
-              ? 'border-pi-warning/50'
-              : 'border-pi-border focus-within:border-pi-accent/50'
-          }`}
+          className="flex-1"
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
         >
@@ -195,13 +194,11 @@ export const InputEditor = forwardRef<InputEditorHandle, InputEditorProps>(funct
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={
-              isStreaming
-                ? 'Enter to steer, Alt+Enter for follow-up...'
-                : 'Type a message... (Shift+Enter for new line)'
-            }
+            placeholder={isStreaming ? 'steer...' : 'message...'}
             rows={1}
-            className="w-full resize-none bg-transparent px-4 py-3 text-pi-text placeholder-pi-muted focus:outline-none"
+            className={`w-full resize-none bg-transparent py-1 text-pi-text placeholder-pi-muted focus:outline-none ${
+              isStreaming ? 'border-b border-pi-warning/50' : ''
+            }`}
           />
         </div>
 
@@ -209,37 +206,20 @@ export const InputEditor = forwardRef<InputEditorHandle, InputEditorProps>(funct
         {isStreaming ? (
           <button
             onClick={onAbort}
-            className="flex-shrink-0 p-3 rounded-lg bg-pi-error/20 hover:bg-pi-error/30 transition-colors text-pi-error"
+            className="text-pi-error hover:text-pi-error/80 py-1"
             title="Stop"
           >
-            <Square className="w-5 h-5" />
+            [stop]
           </button>
         ) : (
           <button
             onClick={handleSubmit}
             disabled={!value.trim() && images.length === 0}
-            className="flex-shrink-0 p-3 rounded-lg bg-pi-accent hover:bg-pi-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white"
+            className="text-pi-accent hover:text-pi-accent-hover disabled:opacity-30 disabled:cursor-not-allowed py-1"
             title="Send"
           >
-            <Send className="w-5 h-5" />
+            [send]
           </button>
-        )}
-      </div>
-
-      {/* Help text */}
-      <div className="mt-2 text-xs text-pi-muted">
-        {isStreaming ? (
-          <span>
-            <kbd className="px-1 py-0.5 rounded bg-pi-bg border border-pi-border">Enter</kbd> to steer (interrupt) •{' '}
-            <kbd className="px-1 py-0.5 rounded bg-pi-bg border border-pi-border">Alt+Enter</kbd> for follow-up •{' '}
-            <kbd className="px-1 py-0.5 rounded bg-pi-bg border border-pi-border">Esc</kbd> to stop
-          </span>
-        ) : (
-          <span>
-            <kbd className="px-1 py-0.5 rounded bg-pi-bg border border-pi-border">Enter</kbd> to send •{' '}
-            <kbd className="px-1 py-0.5 rounded bg-pi-bg border border-pi-border">Shift+Enter</kbd> for new line •{' '}
-            Paste images with <kbd className="px-1 py-0.5 rounded bg-pi-bg border border-pi-border">Ctrl+V</kbd>
-          </span>
         )}
       </div>
     </div>

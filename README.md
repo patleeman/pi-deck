@@ -4,6 +4,8 @@ A full-featured web interface for [Pi](https://github.com/badlogic/pi-mono), the
 
 ## Features
 
+- 📁 **Multi-Workspace Support** - Open multiple directories simultaneously with tab-based navigation
+- 🔒 **Directory Allowlist** - Secure access control for which directories can be opened
 - 💬 **Real-time Chat** - Streaming responses with markdown rendering
 - 🧠 **Thinking Display** - Collapsible thinking blocks for reasoning models
 - 🔧 **Tool Visualization** - Live tool execution with streaming output
@@ -22,12 +24,21 @@ A full-featured web interface for [Pi](https://github.com/badlogic/pi-mono), the
 │  │   (Vite + TS)       │ WS │     (Express + Pi SDK)      │ │
 │  │   port 3000 (dev)   │    │     port 3001               │ │
 │  └─────────────────────┘    └─────────────────────────────┘ │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              Session Orchestrator                     │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐             │   │
+│  │  │Workspace1│ │Workspace2│ │Workspace3│ ...         │   │
+│  │  │/proj/foo │ │/proj/bar │ │~/code/baz│             │   │
+│  │  └──────────┘ └──────────┘ └──────────┘             │   │
+│  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 - **Frontend**: React 19 + Vite + TailwindCSS
 - **Backend**: Express + WebSocket + Pi SDK
 - **Communication**: WebSocket for real-time streaming
+- **Orchestration**: Multi-workspace session management
 
 ## Quick Start
 
@@ -65,12 +76,46 @@ npm start
 
 ## Configuration
 
+### Config File
+
+Create `pi-web-ui.config.json` in one of these locations:
+- Current working directory
+- `~/.config/pi-web-ui/config.json`
+- `~/.pi-web-ui.config.json`
+
+Example configuration:
+
+```json
+{
+  "port": 3001,
+  "allowedDirectories": [
+    "~/projects",
+    "~/code",
+    "/work/repos"
+  ]
+}
+```
+
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 3001 | Backend server port |
-| `PI_CWD` | `process.cwd()` | Working directory for Pi |
+| `PI_ALLOWED_DIRS` | Home directory | Colon-separated list of allowed directories |
+
+Example:
+```bash
+PI_ALLOWED_DIRS="~/projects:~/work:/opt/repos" npm start
+```
+
+### Security
+
+**Important**: The allowlist controls which directories can be accessed through the web UI. By default, only the user's home directory is allowed.
+
+For untrusted networks, you should:
+1. Configure a restrictive allowlist
+2. Use a reverse proxy with authentication
+3. Consider running behind a VPN
 
 API keys are read from the standard locations:
 - Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
@@ -81,24 +126,30 @@ API keys are read from the standard locations:
 ```
 pi-web-ui/
 ├── packages/
-│   ├── shared/           # Shared types
+│   ├── shared/                    # Shared types
 │   │   └── src/
-│   │       └── index.ts  # WebSocket protocol types
-│   ├── server/           # Node.js backend
+│   │       └── index.ts           # WebSocket protocol types
+│   ├── server/                    # Node.js backend
 │   │   └── src/
-│   │       ├── index.ts      # Express + WebSocket server
-│   │       └── pi-session.ts # Pi SDK integration
-│   └── client/           # React frontend
+│   │       ├── index.ts           # Express + WebSocket server
+│   │       ├── config.ts          # Configuration loading
+│   │       ├── directory-browser.ts # Directory browsing
+│   │       ├── session-orchestrator.ts # Multi-workspace management
+│   │       └── pi-session.ts      # Pi SDK integration
+│   └── client/                    # React frontend
 │       └── src/
 │           ├── App.tsx
 │           ├── hooks/
-│           │   └── useWebSocket.ts
+│           │   └── useWorkspaces.ts  # Multi-workspace state
 │           └── components/
 │               ├── ChatView.tsx
+│               ├── DirectoryBrowser.tsx
+│               ├── WorkspaceTabs.tsx
 │               ├── MessageBubble.tsx
 │               ├── InputEditor.tsx
 │               └── ...
-├── package.json          # Monorepo root
+├── pi-web-ui.config.example.json  # Example config
+├── package.json                   # Monorepo root
 └── README.md
 ```
 
@@ -108,6 +159,15 @@ The client and server communicate via WebSocket with JSON messages.
 
 ### Client → Server
 
+#### Workspace Management
+| Message | Description |
+|---------|-------------|
+| `openWorkspace` | Open a directory as a workspace |
+| `closeWorkspace` | Close a workspace |
+| `listWorkspaces` | Get list of open workspaces |
+| `browseDirectory` | Browse directory contents |
+
+#### Session Operations (require `workspaceId`)
 | Message | Description |
 |---------|-------------|
 | `prompt` | Send a user message |
@@ -124,13 +184,43 @@ The client and server communicate via WebSocket with JSON messages.
 
 | Event | Description |
 |-------|-------------|
-| `connected` | Initial connection with state |
-| `state` | State update |
+| `connected` | Initial connection with allowed roots |
+| `workspaceOpened` | Workspace opened with initial state |
+| `workspaceClosed` | Workspace was closed |
+| `directoryList` | Directory browser results |
+| `state` | State update (includes `workspaceId`) |
 | `messages` | Full message list |
 | `agentStart/End` | Agent lifecycle |
 | `messageStart/Update/End` | Message streaming |
 | `toolStart/Update/End` | Tool execution |
 | `error` | Error notification |
+
+## Usage
+
+### Opening Workspaces
+
+1. Click "+ dir" in the workspace tabs or press `⌘O` / `Ctrl+O`
+2. Navigate the directory browser (only allowed directories are shown)
+3. Click `[open]` on a directory or `[open here]` to open the current location
+4. The workspace opens in a new tab
+
+### Managing Multiple Workspaces
+
+- Click tabs to switch between open workspaces
+- Each workspace maintains its own:
+  - Chat history
+  - Session state
+  - Model settings
+  - Streaming state
+- Close workspaces with the × button on the tab
+- Activity indicator shows which workspaces are streaming
+
+### Directory Browser
+
+- Shows only directories (not files)
+- `●` indicator shows directories with existing Pi sessions
+- Navigate with click, go back with `..`
+- Respects the allowlist - directories outside allowed paths are hidden
 
 ## Customization
 

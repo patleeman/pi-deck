@@ -1,4 +1,3 @@
-import { Plus, RefreshCw, MessageSquare } from 'lucide-react';
 import type { SessionInfo } from '@pi-web-ui/shared';
 
 interface SidebarProps {
@@ -20,24 +19,24 @@ export function Sidebar({
   const sortedSessions = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
 
   return (
-    <aside className="w-64 flex-shrink-0 border-r border-pi-border bg-pi-surface flex flex-col">
+    <aside className="w-56 flex-shrink-0 border-r border-pi-border bg-pi-surface flex flex-col font-mono text-sm">
       {/* Header */}
-      <div className="p-3 border-b border-pi-border flex items-center justify-between">
-        <span className="text-sm font-medium text-pi-text">Sessions</span>
-        <div className="flex items-center gap-1">
+      <div className="px-2 py-1 border-b border-pi-border flex items-center justify-between">
+        <span className="text-pi-muted">sessions</span>
+        <div className="flex items-center">
           <button
             onClick={onRefresh}
-            className="p-1.5 rounded hover:bg-pi-bg transition-colors text-pi-muted hover:text-pi-text"
+            className="px-1 hover:text-pi-text text-pi-muted"
             title="Refresh sessions"
           >
-            <RefreshCw className="w-4 h-4" />
+            ↻
           </button>
           <button
             onClick={onNewSession}
-            className="p-1.5 rounded bg-pi-accent/20 hover:bg-pi-accent/30 transition-colors text-pi-accent"
+            className="px-1 text-pi-accent hover:text-pi-accent-hover"
             title="New session"
           >
-            <Plus className="w-4 h-4" />
+            +
           </button>
         </div>
       </div>
@@ -45,34 +44,26 @@ export function Sidebar({
       {/* Session list */}
       <div className="flex-1 overflow-y-auto">
         {sortedSessions.length === 0 ? (
-          <div className="p-4 text-center text-pi-muted text-sm">
-            No sessions yet
+          <div className="px-2 py-2 text-pi-muted">
+            (empty)
           </div>
         ) : (
-          <div className="p-2 space-y-1">
+          <div className="py-0.5">
             {sortedSessions.map((session) => (
               <button
                 key={session.id}
                 onClick={() => onSwitchSession(session.path)}
-                className={`w-full text-left p-2 rounded-lg transition-colors ${
+                className={`w-full text-left px-2 py-0.5 transition-colors flex items-center gap-1 ${
                   session.id === currentSessionId
-                    ? 'bg-pi-accent/20 border border-pi-accent/50'
-                    : 'hover:bg-pi-bg border border-transparent'
+                    ? 'bg-pi-accent/20 text-pi-accent'
+                    : 'hover:bg-pi-bg'
                 }`}
               >
-                <div className="flex items-start gap-2">
-                  <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-pi-muted" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-pi-text truncate">
-                      {session.name || session.firstMessage || 'Empty session'}
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5 text-xs text-pi-muted">
-                      <span>{session.messageCount} msgs</span>
-                      <span>•</span>
-                      <span>{formatRelativeTime(session.updatedAt)}</span>
-                    </div>
-                  </div>
-                </div>
+                <span className="text-pi-muted">{session.id === currentSessionId ? '▸' : ' '}</span>
+                <span className="flex-1 truncate">
+                  {session.name || session.firstMessage || '(empty)'}
+                </span>
+                <span className="text-pi-muted text-xs">{session.messageCount}</span>
               </button>
             ))}
           </div>
@@ -80,20 +71,4 @@ export function Sidebar({
       </div>
     </aside>
   );
-}
-
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-
-  return new Date(timestamp).toLocaleDateString();
 }

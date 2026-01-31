@@ -42,17 +42,11 @@ export function ChatView({
   return (
     <div
       ref={scrollRef}
-      className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+      className="flex-1 overflow-y-auto px-3 py-2 space-y-1"
     >
       {displayMessages.length === 0 && !isStreaming ? (
-        <div className="h-full flex items-center justify-center">
-          <div className="text-center text-pi-muted">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-pi-surface border border-pi-border flex items-center justify-center">
-              <span className="text-3xl text-pi-accent">π</span>
-            </div>
-            <p className="text-lg font-medium text-pi-text mb-1">Welcome to Pi</p>
-            <p className="text-sm">Start a conversation by typing a message below</p>
-          </div>
+        <div className="text-pi-muted font-mono text-sm py-2">
+          <span className="text-pi-accent">π</span> ready. type a message to begin.
         </div>
       ) : (
         <>
@@ -72,7 +66,7 @@ export function ChatView({
 
           {/* Active tool executions */}
           {activeToolExecutions.length > 0 && (
-            <div className="space-y-2">
+            <div className="space-y-0.5">
               {activeToolExecutions.map((tool) => (
                 <ToolExecution key={tool.toolCallId} tool={tool} />
               ))}

@@ -4,71 +4,120 @@
  */
 
 // ============================================================================
+// Workspace Types (Multi-directory orchestration)
+// ============================================================================
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  hasPiSessions: boolean;
+}
+
+export interface WorkspaceInfo {
+  id: string;
+  path: string;
+  name: string;
+  isActive: boolean;
+  state: SessionState | null;
+}
+
+// ============================================================================
 // WebSocket Messages (Client -> Server)
 // ============================================================================
 
-export interface WsPromptMessage {
+// Workspace management
+export interface WsOpenWorkspaceMessage {
+  type: 'openWorkspace';
+  path: string;
+}
+
+export interface WsCloseWorkspaceMessage {
+  type: 'closeWorkspace';
+  workspaceId: string;
+}
+
+export interface WsListWorkspacesMessage {
+  type: 'listWorkspaces';
+}
+
+export interface WsBrowseDirectoryMessage {
+  type: 'browseDirectory';
+  path?: string; // If not provided, returns allowed roots
+}
+
+// Base interface for workspace-scoped messages
+interface WorkspaceScopedMessage {
+  workspaceId: string;
+}
+
+export interface WsPromptMessage extends WorkspaceScopedMessage {
   type: 'prompt';
   message: string;
   images?: ImageAttachment[];
 }
 
-export interface WsSteerMessage {
+export interface WsSteerMessage extends WorkspaceScopedMessage {
   type: 'steer';
   message: string;
 }
 
-export interface WsFollowUpMessage {
+export interface WsFollowUpMessage extends WorkspaceScopedMessage {
   type: 'followUp';
   message: string;
 }
 
-export interface WsAbortMessage {
+export interface WsAbortMessage extends WorkspaceScopedMessage {
   type: 'abort';
 }
 
-export interface WsSetModelMessage {
+export interface WsSetModelMessage extends WorkspaceScopedMessage {
   type: 'setModel';
   provider: string;
   modelId: string;
 }
 
-export interface WsSetThinkingLevelMessage {
+export interface WsSetThinkingLevelMessage extends WorkspaceScopedMessage {
   type: 'setThinkingLevel';
   level: ThinkingLevel;
 }
 
-export interface WsNewSessionMessage {
+export interface WsNewSessionMessage extends WorkspaceScopedMessage {
   type: 'newSession';
 }
 
-export interface WsSwitchSessionMessage {
+export interface WsSwitchSessionMessage extends WorkspaceScopedMessage {
   type: 'switchSession';
   sessionId: string;
 }
 
-export interface WsCompactMessage {
+export interface WsCompactMessage extends WorkspaceScopedMessage {
   type: 'compact';
   customInstructions?: string;
 }
 
-export interface WsGetStateMessage {
+export interface WsGetStateMessage extends WorkspaceScopedMessage {
   type: 'getState';
 }
 
-export interface WsGetMessagesMessage {
+export interface WsGetMessagesMessage extends WorkspaceScopedMessage {
   type: 'getMessages';
 }
 
-export interface WsGetSessionsMessage {
+export interface WsGetSessionsMessage extends WorkspaceScopedMessage {
   type: 'getSessions';
 }
 
-export interface WsGetModelsMessage {
+export interface WsGetModelsMessage extends WorkspaceScopedMessage {
   type: 'getModels';
 }
 
 export type WsClientMessage =
+  // Workspace management (not scoped to a workspace)
+  | WsOpenWorkspaceMessage
+  | WsCloseWorkspaceMessage
+  | WsListWorkspacesMessage
+  | WsBrowseDirectoryMessage
+  // Workspace-scoped operations
   | WsPromptMessage
   | WsSteerMessage
   | WsFollowUpMessage
@@ -87,57 +136,166 @@ export type WsClientMessage =
 // WebSocket Messages (Server -> Client)
 // ============================================================================
 
+// Workspace management events
+export interface WsWorkspaceOpenedEvent {
+  type: 'workspaceOpened';
+  workspace: WorkspaceInfo;
+  state: SessionState;
+  messages: ChatMessage[];
+}
+
+export interface WsWorkspaceClosedEvent {
+  type: 'workspaceClosed';
+  workspaceId: string;
+}
+
+export interface WsWorkspacesListEvent {
+  type: 'workspacesList';
+  workspaces: WorkspaceInfo[];
+}
+
+export interface WsDirectoryListEvent {
+  type: 'directoryList';
+  path: string;
+  entries: DirectoryEntry[];
+  allowedRoots?: string[];
+}
+
 export interface WsConnectedEvent {
   type: 'connected';
-  state: SessionState;
+  workspaces: WorkspaceInfo[];
+  allowedRoots: string[];
 }
+
+// ============================================================================
+// Internal Session Events (emitted by PiSession, no workspaceId yet)
+// ============================================================================
+
+export interface SessionAgentStartEvent {
+  type: 'agentStart';
+}
+
+export interface SessionAgentEndEvent {
+  type: 'agentEnd';
+}
+
+export interface SessionMessageStartEvent {
+  type: 'messageStart';
+  message: ChatMessage;
+}
+
+export interface SessionMessageUpdateEvent {
+  type: 'messageUpdate';
+  messageId: string;
+  update: MessageUpdate;
+}
+
+export interface SessionMessageEndEvent {
+  type: 'messageEnd';
+  message: ChatMessage;
+}
+
+export interface SessionToolStartEvent {
+  type: 'toolStart';
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+export interface SessionToolUpdateEvent {
+  type: 'toolUpdate';
+  toolCallId: string;
+  partialResult: string;
+}
+
+export interface SessionToolEndEvent {
+  type: 'toolEnd';
+  toolCallId: string;
+  result: string;
+  isError: boolean;
+}
+
+export interface SessionCompactionStartEvent {
+  type: 'compactionStart';
+}
+
+export interface SessionCompactionEndEvent {
+  type: 'compactionEnd';
+  summary: string;
+}
+
+export type SessionEvent =
+  | SessionAgentStartEvent
+  | SessionAgentEndEvent
+  | SessionMessageStartEvent
+  | SessionMessageUpdateEvent
+  | SessionMessageEndEvent
+  | SessionToolStartEvent
+  | SessionToolUpdateEvent
+  | SessionToolEndEvent
+  | SessionCompactionStartEvent
+  | SessionCompactionEndEvent;
+
+// ============================================================================
+// Workspace-Scoped Server Events (sent over WebSocket with workspaceId)
+// ============================================================================
 
 export interface WsStateEvent {
   type: 'state';
+  workspaceId: string;
   state: SessionState;
 }
 
 export interface WsMessagesEvent {
   type: 'messages';
+  workspaceId: string;
   messages: ChatMessage[];
 }
 
 export interface WsSessionsEvent {
   type: 'sessions';
+  workspaceId: string;
   sessions: SessionInfo[];
 }
 
 export interface WsModelsEvent {
   type: 'models';
+  workspaceId: string;
   models: ModelInfo[];
 }
 
 export interface WsAgentStartEvent {
   type: 'agentStart';
+  workspaceId: string;
 }
 
 export interface WsAgentEndEvent {
   type: 'agentEnd';
+  workspaceId: string;
 }
 
 export interface WsMessageStartEvent {
   type: 'messageStart';
+  workspaceId: string;
   message: ChatMessage;
 }
 
 export interface WsMessageUpdateEvent {
   type: 'messageUpdate';
+  workspaceId: string;
   messageId: string;
   update: MessageUpdate;
 }
 
 export interface WsMessageEndEvent {
   type: 'messageEnd';
+  workspaceId: string;
   message: ChatMessage;
 }
 
 export interface WsToolStartEvent {
   type: 'toolStart';
+  workspaceId: string;
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
@@ -145,12 +303,14 @@ export interface WsToolStartEvent {
 
 export interface WsToolUpdateEvent {
   type: 'toolUpdate';
+  workspaceId: string;
   toolCallId: string;
   partialResult: string;
 }
 
 export interface WsToolEndEvent {
   type: 'toolEnd';
+  workspaceId: string;
   toolCallId: string;
   result: string;
   isError: boolean;
@@ -158,10 +318,12 @@ export interface WsToolEndEvent {
 
 export interface WsCompactionStartEvent {
   type: 'compactionStart';
+  workspaceId: string;
 }
 
 export interface WsCompactionEndEvent {
   type: 'compactionEnd';
+  workspaceId: string;
   summary: string;
 }
 
@@ -169,10 +331,17 @@ export interface WsErrorEvent {
   type: 'error';
   message: string;
   code?: string;
+  workspaceId?: string; // Optional - errors can be global or workspace-scoped
 }
 
 export type WsServerEvent =
+  // Connection & workspace management
   | WsConnectedEvent
+  | WsWorkspaceOpenedEvent
+  | WsWorkspaceClosedEvent
+  | WsWorkspacesListEvent
+  | WsDirectoryListEvent
+  // Workspace-scoped events
   | WsStateEvent
   | WsMessagesEvent
   | WsSessionsEvent

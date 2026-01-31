@@ -25,6 +25,10 @@ interface UseWebSocketReturn {
   isConnecting: boolean;
   error: string | null;
 
+  // Workspace state
+  workspaceId: string | null;
+  allowedRoots: string[];
+
   // Session state
   state: SessionState | null;
   messages: ChatMessage[];
@@ -38,6 +42,7 @@ interface UseWebSocketReturn {
   activeToolExecutions: ToolExecution[];
 
   // Actions
+  openWorkspace: (path: string) => void;
   sendPrompt: (message: string, images?: ImageAttachment[]) => void;
   steer: (message: string) => void;
   followUp: (message: string) => void;
@@ -59,6 +64,9 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   const [isConnecting, setIsConnecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [allowedRoots, setAllowedRoots] = useState<string[]>([]);
+
   const [state, setState] = useState<SessionState | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -69,6 +77,12 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   const [streamingThinking, setStreamingThinking] = useState('');
   const [activeToolExecutions, setActiveToolExecutions] = useState<ToolExecution[]>([]);
 
+  // Ref to track current workspaceId for use in callbacks
+  const workspaceIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    workspaceIdRef.current = workspaceId;
+  }, [workspaceId]);
+
   const send = useCallback((message: WsClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
@@ -78,94 +92,128 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   const handleEvent = useCallback((event: WsServerEvent) => {
     switch (event.type) {
       case 'connected':
+        setAllowedRoots(event.allowedRoots);
+        // Auto-open first allowed root as default workspace
+        if (event.allowedRoots.length > 0) {
+          send({ type: 'openWorkspace', path: event.allowedRoots[0] });
+        }
+        break;
+
+      case 'workspaceOpened':
+        setWorkspaceId(event.workspace.id);
         setState(event.state);
-        send({ type: 'getMessages' });
-        send({ type: 'getSessions' });
-        send({ type: 'getModels' });
+        setMessages(event.messages);
+        // Now fetch sessions and models for this workspace
+        send({ type: 'getSessions', workspaceId: event.workspace.id });
+        send({ type: 'getModels', workspaceId: event.workspace.id });
         break;
 
       case 'state':
-        setState(event.state);
+        if (event.workspaceId === workspaceIdRef.current) {
+          setState(event.state);
+        }
         break;
 
       case 'messages':
-        setMessages(event.messages);
+        if (event.workspaceId === workspaceIdRef.current) {
+          setMessages(event.messages);
+        }
         break;
 
       case 'sessions':
-        setSessions(event.sessions);
+        if (event.workspaceId === workspaceIdRef.current) {
+          setSessions(event.sessions);
+        }
         break;
 
       case 'models':
-        setModels(event.models);
+        if (event.workspaceId === workspaceIdRef.current) {
+          setModels(event.models);
+        }
         break;
 
       case 'agentStart':
-        setIsStreaming(true);
-        setStreamingText('');
-        setStreamingThinking('');
+        if (event.workspaceId === workspaceIdRef.current) {
+          setIsStreaming(true);
+          setStreamingText('');
+          setStreamingThinking('');
+        }
         break;
 
       case 'agentEnd':
-        setIsStreaming(false);
-        setStreamingText('');
-        setStreamingThinking('');
-        setActiveToolExecutions([]);
-        send({ type: 'getState' });
+        if (event.workspaceId === workspaceIdRef.current) {
+          setIsStreaming(false);
+          setStreamingText('');
+          setStreamingThinking('');
+          setActiveToolExecutions([]);
+          if (workspaceIdRef.current) {
+            send({ type: 'getState', workspaceId: workspaceIdRef.current });
+          }
+        }
         break;
 
       case 'messageStart':
-        // Add the message to the list
-        setMessages((prev) => [...prev, event.message]);
+        if (event.workspaceId === workspaceIdRef.current) {
+          setMessages((prev) => [...prev, event.message]);
+        }
         break;
 
       case 'messageUpdate':
-        if (event.update.type === 'textDelta' && event.update.delta) {
-          setStreamingText((prev) => prev + event.update.delta);
-        } else if (event.update.type === 'thinkingDelta' && event.update.delta) {
-          setStreamingThinking((prev) => prev + event.update.delta);
+        if (event.workspaceId === workspaceIdRef.current) {
+          if (event.update.type === 'textDelta' && event.update.delta) {
+            setStreamingText((prev) => prev + event.update.delta);
+          } else if (event.update.type === 'thinkingDelta' && event.update.delta) {
+            setStreamingThinking((prev) => prev + event.update.delta);
+          }
         }
         break;
 
       case 'messageEnd':
-        // Update the message in the list with final content
-        setMessages((prev) =>
-          prev.map((m) => (m.id === event.message.id ? event.message : m))
-        );
-        setStreamingText('');
-        setStreamingThinking('');
+        if (event.workspaceId === workspaceIdRef.current) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === event.message.id ? event.message : m))
+          );
+          setStreamingText('');
+          setStreamingThinking('');
+        }
         break;
 
       case 'toolStart':
-        setActiveToolExecutions((prev) => [
-          ...prev,
-          {
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            args: event.args,
-            status: 'running',
-          },
-        ]);
+        if (event.workspaceId === workspaceIdRef.current) {
+          setActiveToolExecutions((prev) => [
+            ...prev,
+            {
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              args: event.args,
+              status: 'running',
+            },
+          ]);
+        }
         break;
 
       case 'toolUpdate':
-        setActiveToolExecutions((prev) =>
-          prev.map((t) =>
-            t.toolCallId === event.toolCallId
-              ? { ...t, result: event.partialResult }
-              : t
-          )
-        );
+        if (event.workspaceId === workspaceIdRef.current) {
+          setActiveToolExecutions((prev) =>
+            prev.map((t) =>
+              t.toolCallId === event.toolCallId
+                ? { ...t, result: event.partialResult }
+                : t
+            )
+          );
+        }
         break;
 
       case 'toolEnd':
-        setActiveToolExecutions((prev) =>
-          prev.map((t) =>
-            t.toolCallId === event.toolCallId
-              ? { ...t, status: event.isError ? 'error' : 'complete', result: event.result, isError: event.isError }
-              : t
-          )
-        );
+        if (event.workspaceId === workspaceIdRef.current) {
+          setActiveToolExecutions((prev) =>
+            prev.map((t) =>
+              t.toolCallId === event.toolCallId
+                ? { ...t, status: event.isError ? 'error' : 'complete', result: event.result, isError: event.isError }
+                : t
+            )
+          );
+        }
         break;
 
       case 'compactionStart':
@@ -173,8 +221,10 @@ export function useWebSocket(url: string): UseWebSocketReturn {
         break;
 
       case 'compactionEnd':
-        send({ type: 'getMessages' });
-        send({ type: 'getState' });
+        if (event.workspaceId === workspaceIdRef.current && workspaceIdRef.current) {
+          send({ type: 'getMessages', workspaceId: workspaceIdRef.current });
+          send({ type: 'getState', workspaceId: workspaceIdRef.current });
+        }
         break;
 
       case 'error':
@@ -240,6 +290,8 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     isConnected,
     isConnecting,
     error,
+    workspaceId,
+    allowedRoots,
     state,
     messages,
     sessions,
@@ -249,26 +301,63 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     streamingThinking,
     activeToolExecutions,
 
-    sendPrompt: (message: string, images?: ImageAttachment[]) => {
-      send({ type: 'prompt', message, images });
+    openWorkspace: (path: string) => {
+      send({ type: 'openWorkspace', path });
     },
-    steer: (message: string) => send({ type: 'steer', message }),
-    followUp: (message: string) => send({ type: 'followUp', message }),
-    abort: () => send({ type: 'abort' }),
+    sendPrompt: (message: string, images?: ImageAttachment[]) => {
+      if (workspaceId) {
+        send({ type: 'prompt', workspaceId, message, images });
+      }
+    },
+    steer: (message: string) => {
+      if (workspaceId) {
+        send({ type: 'steer', workspaceId, message });
+      }
+    },
+    followUp: (message: string) => {
+      if (workspaceId) {
+        send({ type: 'followUp', workspaceId, message });
+      }
+    },
+    abort: () => {
+      if (workspaceId) {
+        send({ type: 'abort', workspaceId });
+      }
+    },
     setModel: (provider: string, modelId: string) => {
-      send({ type: 'setModel', provider, modelId });
+      if (workspaceId) {
+        send({ type: 'setModel', workspaceId, provider, modelId });
+      }
     },
     setThinkingLevel: (level: ThinkingLevel) => {
-      send({ type: 'setThinkingLevel', level });
+      if (workspaceId) {
+        send({ type: 'setThinkingLevel', workspaceId, level });
+      }
     },
-    newSession: () => send({ type: 'newSession' }),
+    newSession: () => {
+      if (workspaceId) {
+        send({ type: 'newSession', workspaceId });
+      }
+    },
     switchSession: (sessionId: string) => {
-      send({ type: 'switchSession', sessionId });
+      if (workspaceId) {
+        send({ type: 'switchSession', workspaceId, sessionId });
+      }
     },
     compact: (customInstructions?: string) => {
-      send({ type: 'compact', customInstructions });
+      if (workspaceId) {
+        send({ type: 'compact', workspaceId, customInstructions });
+      }
     },
-    refreshSessions: () => send({ type: 'getSessions' }),
-    refreshModels: () => send({ type: 'getModels' }),
+    refreshSessions: () => {
+      if (workspaceId) {
+        send({ type: 'getSessions', workspaceId });
+      }
+    },
+    refreshModels: () => {
+      if (workspaceId) {
+        send({ type: 'getModels', workspaceId });
+      }
+    },
   };
 }

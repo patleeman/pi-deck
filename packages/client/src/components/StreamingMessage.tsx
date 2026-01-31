@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Bot, ChevronDown, ChevronRight } from 'lucide-react';
 import { MarkdownContent } from './MarkdownContent';
 
 interface StreamingMessageProps {
@@ -11,31 +10,21 @@ export function StreamingMessage({ text, thinking }: StreamingMessageProps) {
   const [showThinking, setShowThinking] = useState(false);
 
   return (
-    <div className="flex gap-3">
-      {/* Avatar */}
-      <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-pi-surface border border-pi-accent/50 flex items-center justify-center">
-        <Bot className="w-4 h-4 text-pi-accent animate-pulse" />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div className="rounded-lg px-4 py-3 bg-pi-surface border border-pi-accent/30">
+    <div className="font-mono text-sm">
+      <div className="flex items-baseline gap-2 text-pi-muted">
+        <span className="text-pi-accent animate-pulse">π</span>
+        <div className="flex-1 min-w-0">
           {/* Thinking */}
           {thinking && (
-            <div className="mb-2">
+            <div className="mb-0.5">
               <button
                 onClick={() => setShowThinking(!showThinking)}
-                className="flex items-center gap-1 text-xs text-pi-muted hover:text-pi-text transition-colors"
+                className="text-pi-muted hover:text-pi-text transition-colors"
               >
-                {showThinking ? (
-                  <ChevronDown className="w-3 h-3" />
-                ) : (
-                  <ChevronRight className="w-3 h-3" />
-                )}
-                <span className="thinking-indicator">Thinking...</span>
+                <span className="thinking-indicator">[{showThinking ? '−' : '+'} thinking...]</span>
               </button>
               {showThinking && (
-                <div className="mt-2 pl-3 border-l-2 border-pi-accent/30 text-sm text-pi-muted italic">
+                <div className="pl-2 border-l border-pi-border text-pi-muted">
                   <MarkdownContent content={thinking} />
                 </div>
               )}
@@ -44,18 +33,12 @@ export function StreamingMessage({ text, thinking }: StreamingMessageProps) {
 
           {/* Text */}
           {text ? (
-            <div className="markdown-content">
+            <div className="markdown-content text-pi-text">
               <MarkdownContent content={text} />
-              <span className="inline-block w-2 h-4 bg-pi-accent animate-pulse ml-0.5" />
+              <span className="inline-block w-1.5 h-3.5 bg-pi-accent animate-pulse ml-0.5 align-text-bottom" />
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-pi-muted">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-pi-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 bg-pi-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 bg-pi-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
+            <span className="text-pi-muted animate-pulse">...</span>
           )}
         </div>
       </div>

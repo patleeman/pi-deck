@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { ChevronDown, Brain, Zap } from 'lucide-react';
 import type { ModelInfo, SessionState, ThinkingLevel } from '@pi-web-ui/shared';
 
 interface HeaderProps {
@@ -34,21 +33,17 @@ export function Header({ state, models, onSetModel, onSetThinkingLevel }: Header
   }, {} as Record<string, ModelInfo[]>);
 
   return (
-    <header className="flex-shrink-0 border-b border-pi-border bg-pi-surface px-4 py-3">
+    <header className="flex-shrink-0 border-b border-pi-border bg-pi-surface px-3 py-1">
       <div className="flex items-center justify-between">
         {/* Logo and title */}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-pi-accent/20 flex items-center justify-center">
-            <span className="text-pi-accent font-bold text-lg">π</span>
-          </div>
-          <div>
-            <h1 className="font-semibold text-pi-text">Pi Web UI</h1>
-            <p className="text-xs text-pi-muted">Coding Agent</p>
-          </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-pi-accent font-mono">π</span>
+          <span className="text-pi-muted">/</span>
+          <span className="text-pi-text">pi-web-ui</span>
         </div>
 
         {/* Model and thinking controls */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 text-sm">
           {/* Model selector */}
           <div className="relative">
             <button
@@ -56,20 +51,18 @@ export function Header({ state, models, onSetModel, onSetThinkingLevel }: Header
                 setShowModelDropdown(!showModelDropdown);
                 setShowThinkingDropdown(false);
               }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-pi-bg border border-pi-border hover:border-pi-accent/50 transition-colors"
+              className="flex items-center gap-1 px-2 py-0.5 bg-pi-bg border border-pi-border hover:border-pi-accent/50 font-mono text-sm"
             >
-              <Zap className="w-4 h-4 text-pi-accent" />
-              <span className="text-sm">
-                {state?.model?.name || 'No model'}
-              </span>
-              <ChevronDown className="w-4 h-4 text-pi-muted" />
+              <span className="text-pi-accent">⚡</span>
+              <span>{state?.model?.name || 'No model'}</span>
+              <span className="text-pi-muted">▾</span>
             </button>
 
             {showModelDropdown && (
-              <div className="absolute right-0 top-full mt-1 w-72 bg-pi-surface border border-pi-border rounded-lg shadow-xl z-50 max-h-96 overflow-y-auto">
+              <div className="absolute right-0 top-full mt-0.5 w-64 bg-pi-surface border border-pi-border z-50 max-h-80 overflow-y-auto">
                 {Object.entries(modelsByProvider).map(([provider, providerModels]) => (
                   <div key={provider}>
-                    <div className="px-3 py-2 text-xs font-medium text-pi-muted uppercase border-b border-pi-border bg-pi-bg/50">
+                    <div className="px-2 py-1 text-xs text-pi-muted border-b border-pi-border bg-pi-bg/50 font-mono">
                       {provider}
                     </div>
                     {providerModels.map((model) => (
@@ -79,17 +72,15 @@ export function Header({ state, models, onSetModel, onSetThinkingLevel }: Header
                           onSetModel(model.provider, model.id);
                           setShowModelDropdown(false);
                         }}
-                        className={`w-full text-left px-3 py-2 hover:bg-pi-bg transition-colors flex items-center justify-between ${
+                        className={`w-full text-left px-2 py-1 hover:bg-pi-bg transition-colors flex items-center justify-between font-mono text-sm ${
                           state?.model?.id === model.id ? 'bg-pi-accent/10 text-pi-accent' : ''
                         }`}
                       >
-                        <span className="text-sm">{model.name}</span>
-                        <div className="flex items-center gap-2 text-xs text-pi-muted">
-                          {model.reasoning && (
-                            <Brain className="w-3 h-3" />
-                          )}
-                          <span>{Math.round(model.contextWindow / 1000)}k</span>
-                        </div>
+                        <span>{model.name}</span>
+                        <span className="text-xs text-pi-muted">
+                          {model.reasoning && '🧠 '}
+                          {Math.round(model.contextWindow / 1000)}k
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -105,16 +96,15 @@ export function Header({ state, models, onSetModel, onSetThinkingLevel }: Header
                 setShowThinkingDropdown(!showThinkingDropdown);
                 setShowModelDropdown(false);
               }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-pi-bg border border-pi-border hover:border-pi-accent/50 transition-colors"
+              className="flex items-center gap-1 px-2 py-0.5 bg-pi-bg border border-pi-border hover:border-pi-accent/50 font-mono text-sm"
             >
-              <Brain className="w-4 h-4 text-pi-accent" />
-              <span className="text-sm">{currentThinking.label}</span>
-              <span className="text-pi-muted">{currentThinking.icon}</span>
-              <ChevronDown className="w-4 h-4 text-pi-muted" />
+              <span className="text-pi-accent">{currentThinking.icon}</span>
+              <span>{currentThinking.label}</span>
+              <span className="text-pi-muted">▾</span>
             </button>
 
             {showThinkingDropdown && (
-              <div className="absolute right-0 top-full mt-1 w-40 bg-pi-surface border border-pi-border rounded-lg shadow-xl z-50">
+              <div className="absolute right-0 top-full mt-0.5 w-32 bg-pi-surface border border-pi-border z-50">
                 {THINKING_LEVELS.map((level) => (
                   <button
                     key={level.value}
@@ -122,12 +112,11 @@ export function Header({ state, models, onSetModel, onSetThinkingLevel }: Header
                       onSetThinkingLevel(level.value);
                       setShowThinkingDropdown(false);
                     }}
-                    className={`w-full text-left px-3 py-2 hover:bg-pi-bg transition-colors flex items-center justify-between ${
+                    className={`w-full text-left px-2 py-1 hover:bg-pi-bg transition-colors flex items-center justify-between font-mono text-sm ${
                       state?.thinkingLevel === level.value ? 'bg-pi-accent/10 text-pi-accent' : ''
                     }`}
                   >
-                    <span className="text-sm">{level.label}</span>
-                    <span className="text-pi-muted">{level.icon}</span>
+                    <span>{level.icon} {level.label}</span>
                   </button>
                 ))}
               </div>

@@ -15,9 +15,9 @@ import type {
   ModelInfo,
   SessionInfo,
   SessionState,
+  SessionEvent,
   ThinkingLevel,
   TokenUsage,
-  WsServerEvent,
 } from '@pi-web-ui/shared';
 
 export class PiSession extends EventEmitter {
@@ -61,17 +61,17 @@ export class PiSession extends EventEmitter {
   private handleEvent(event: AgentSessionEvent): void {
     switch (event.type) {
       case 'agent_start':
-        this.emit('event', { type: 'agentStart' } satisfies WsServerEvent);
+        this.emit('event', { type: 'agentStart' } satisfies SessionEvent);
         break;
 
       case 'agent_end':
-        this.emit('event', { type: 'agentEnd' } satisfies WsServerEvent);
+        this.emit('event', { type: 'agentEnd' } satisfies SessionEvent);
         break;
 
       case 'message_start': {
         const startMsg = this.convertMessage(event.message);
         this.messageMap.set(startMsg.id, startMsg);
-        this.emit('event', { type: 'messageStart', message: startMsg } satisfies WsServerEvent);
+        this.emit('event', { type: 'messageStart', message: startMsg } satisfies SessionEvent);
         break;
       }
 
@@ -82,7 +82,7 @@ export class PiSession extends EventEmitter {
       case 'message_end': {
         const endMsg = this.convertMessage(event.message);
         this.messageMap.set(endMsg.id, endMsg);
-        this.emit('event', { type: 'messageEnd', message: endMsg } satisfies WsServerEvent);
+        this.emit('event', { type: 'messageEnd', message: endMsg } satisfies SessionEvent);
         break;
       }
 
@@ -92,7 +92,7 @@ export class PiSession extends EventEmitter {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           args: event.args as Record<string, unknown>,
-        } satisfies WsServerEvent);
+        } satisfies SessionEvent);
         break;
 
       case 'tool_execution_update': {
@@ -101,7 +101,7 @@ export class PiSession extends EventEmitter {
           type: 'toolUpdate',
           toolCallId: event.toolCallId,
           partialResult: partialText,
-        } satisfies WsServerEvent);
+        } satisfies SessionEvent);
         break;
       }
 
@@ -112,19 +112,19 @@ export class PiSession extends EventEmitter {
           toolCallId: event.toolCallId,
           result: resultText,
           isError: event.isError,
-        } satisfies WsServerEvent);
+        } satisfies SessionEvent);
         break;
       }
 
       case 'auto_compaction_start':
-        this.emit('event', { type: 'compactionStart' } satisfies WsServerEvent);
+        this.emit('event', { type: 'compactionStart' } satisfies SessionEvent);
         break;
 
       case 'auto_compaction_end':
         this.emit('event', {
           type: 'compactionEnd',
           summary: event.result?.summary || '',
-        } satisfies WsServerEvent);
+        } satisfies SessionEvent);
         break;
     }
   }
@@ -151,7 +151,7 @@ export class PiSession extends EventEmitter {
             delta: assistantMessageEvent.delta,
             contentIndex: assistantMessageEvent.contentIndex,
           },
-        } satisfies WsServerEvent);
+        } satisfies SessionEvent);
         break;
 
       case 'thinking_delta':
@@ -163,7 +163,7 @@ export class PiSession extends EventEmitter {
             delta: assistantMessageEvent.delta,
             contentIndex: assistantMessageEvent.contentIndex,
           },
-        } satisfies WsServerEvent);
+        } satisfies SessionEvent);
         break;
     }
   }
@@ -401,5 +401,12 @@ export class PiSession extends EventEmitter {
       reasoning: m.reasoning || false,
       contextWindow: m.contextWindow || 0,
     }));
+  }
+
+  /**
+   * Check if the session is currently streaming/active
+   */
+  isActive(): boolean {
+    return this.session?.isStreaming ?? false;
   }
 }
