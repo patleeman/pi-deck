@@ -289,8 +289,10 @@ function send(ws: WebSocket, event: WsServerEvent) {
   }
 }
 
-server.listen(PORT, () => {
-  console.log(`[Server] Pi Web UI server running on http://localhost:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+  console.log(`[Server] Pi Web UI server running on http://${HOST}:${PORT}`);
   console.log(`[Server] Allowed directories: ${config.allowedDirectories.join(', ')}`);
-  console.log(`[Server] WebSocket endpoint: ws://localhost:${PORT}/ws`);
+  console.log(`[Server] WebSocket endpoint: ws://${HOST}:${PORT}/ws`);
 });
