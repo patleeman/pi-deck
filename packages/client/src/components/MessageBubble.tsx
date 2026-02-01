@@ -11,10 +11,13 @@ export function MessageBubble({ message, toolResults = [] }: MessageBubbleProps)
   const isUser = message.role === 'user';
 
   return (
-    <div className="font-mono text-xs md:text-sm">
+    <div 
+      className="font-mono text-xs md:text-sm -mx-2 md:-mx-3 px-2 md:px-3 py-1"
+      style={{ backgroundColor: isUser ? 'var(--pi-user-bg)' : 'var(--pi-assistant-bg)' }}
+    >
       {/* Role indicator */}
-      <div className={`flex items-baseline gap-1.5 md:gap-2 ${isUser ? 'text-pi-accent' : 'text-pi-muted'}`}>
-        <span className="flex-shrink-0">{isUser ? '>' : '~'}</span>
+      <div className={`flex items-baseline gap-1.5 md:gap-2 ${isUser ? 'text-pi-accent' : 'text-pi-text'}`}>
+        <span className="flex-shrink-0 text-pi-muted">{isUser ? '>' : ''}</span>
         <div className="flex-1 min-w-0 overflow-hidden">
           {message.content.map((content, index) => (
             <ContentBlock
@@ -26,12 +29,7 @@ export function MessageBubble({ message, toolResults = [] }: MessageBubbleProps)
             />
           ))}
         </div>
-        {/* Inline metadata for assistant - hide on small screens */}
-        {!isUser && message.usage && (
-          <span className="text-xs text-pi-muted flex-shrink-0 hidden sm:inline">
-            [{message.usage.input + message.usage.output}t]
-          </span>
-        )}
+
       </div>
     </div>
   );
@@ -56,7 +54,10 @@ function ContentBlock({ content, toolResult }: ContentBlockProps) {
 
   if (content.type === 'thinking') {
     return (
-      <div className="my-0.5">
+      <div 
+        className="my-0.5 -mx-2 md:-mx-3 px-2 md:px-3 py-0.5"
+        style={{ backgroundColor: 'var(--pi-thinking-bg)' }}
+      >
         <button
           onClick={() => setIsExpanded(!isExpanded)}
           className="text-pi-muted hover:text-pi-text transition-colors"
@@ -78,7 +79,10 @@ function ContentBlock({ content, toolResult }: ContentBlockProps) {
     const isError = toolResult?.isError;
 
     return (
-      <div className="my-0.5">
+      <div 
+        className="my-0.5 -mx-2 md:-mx-3 px-2 md:px-3 py-0.5"
+        style={{ backgroundColor: 'var(--pi-tool-bg)' }}
+      >
         {/* Tool call header */}
         <button
           onClick={() => setIsExpanded(!isExpanded)}

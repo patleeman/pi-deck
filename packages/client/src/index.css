@@ -16,6 +16,12 @@
   --pi-error: #f38ba8;
   --pi-warning: #fab387;
 
+  /* Message background colors - subtle tints for visual separation */
+  --pi-user-bg: rgba(203, 166, 247, 0.08);    /* Purple tint for user messages */
+  --pi-assistant-bg: transparent;              /* No tint for assistant */
+  --pi-tool-bg: rgba(137, 180, 250, 0.06);    /* Blue tint for tool calls */
+  --pi-thinking-bg: rgba(166, 227, 161, 0.04); /* Green tint for thinking */
+
   /* Syntax highlighting */
   --pi-code-keyword: #cba6f7;
   --pi-code-string: #a6e3a1;

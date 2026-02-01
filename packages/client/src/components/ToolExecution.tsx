@@ -14,7 +14,10 @@ export function ToolExecution({ tool }: ToolExecutionProps) {
   const statusColor = tool.status === 'running' ? 'text-pi-warning' : tool.status === 'error' ? 'text-pi-error' : 'text-pi-success';
 
   return (
-    <div className="font-mono text-sm">
+    <div 
+      className="font-mono text-sm -mx-2 md:-mx-3 px-2 md:px-3 py-1"
+      style={{ backgroundColor: 'var(--pi-tool-bg)' }}
+    >
       <div className="flex items-baseline gap-2">
         <span className="text-pi-muted">$</span>
         <span className={`${statusColor} ${tool.status === 'running' ? 'animate-pulse' : ''}`}>
