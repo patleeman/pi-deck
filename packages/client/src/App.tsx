@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { FolderOpen, Bell, BellOff } from 'lucide-react';
+import { FolderOpen, Bell, BellOff, Settings as SettingsIcon } from 'lucide-react';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { useNotifications } from './hooks/useNotifications';
 import { useTheme } from './contexts/ThemeContext';
+import { useSettings } from './contexts/SettingsContext';
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -10,6 +11,7 @@ import { InputEditor, InputEditorHandle } from './components/InputEditor';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { DirectoryBrowser } from './components/DirectoryBrowser';
 import { WorkspaceTabs } from './components/WorkspaceTabs';
+import { Settings } from './components/Settings';
 
 const WS_URL = import.meta.env.DEV
   ? 'ws://localhost:3001/ws'
@@ -23,7 +25,10 @@ function App() {
   const ws = useWorkspaces(WS_URL);
   const notifications = useNotifications({ titlePrefix: 'Pi' });
   const { theme, setThemeById } = useTheme();
+  const { openSettings } = useSettings();
   const [isDragging, setIsDragging] = useState(false);
+  const [deployStatus, setDeployStatus] = useState<'idle' | 'building' | 'restarting' | 'error'>('idle');
+  const [deployMessage, setDeployMessage] = useState<string | null>(null);
   const [showBrowser, setShowBrowser] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -196,6 +201,28 @@ function App() {
     setIsMobileSidebarOpen(false);
   }, [ws]);
 
+  // Handle deploy/restart via WebSocket
+  const handleDeploy = useCallback(() => {
+    setDeployStatus('building');
+    setDeployMessage('Starting rebuild...');
+    ws.deploy();
+  }, [ws]);
+
+  // Listen for deploy status updates
+  useEffect(() => {
+    // The ws hook should expose deployStatus if available
+    // For now, reset status when connection is lost/restored
+    if (!ws.isConnected) {
+      if (deployStatus === 'restarting') {
+        setDeployMessage('Server restarting... Reconnecting...');
+      }
+    } else if (deployStatus === 'restarting') {
+      setDeployStatus('idle');
+      setDeployMessage('Server restarted successfully');
+      setTimeout(() => setDeployMessage(null), 3000);
+    }
+  }, [ws.isConnected, deployStatus]);
+
   if (!ws.isConnected && ws.isConnecting) {
     return (
       <div className="h-full bg-pi-bg flex items-center justify-center font-mono text-sm text-pi-muted">
@@ -244,6 +271,15 @@ function App() {
           onClose={() => setShowBrowser(false)}
         />
       )}
+
+      {/* Settings modal */}
+      <Settings
+        notificationPermission={notifications.isSupported ? notifications.permission : 'unsupported'}
+        onRequestNotificationPermission={notifications.requestPermission}
+        deployStatus={deployStatus}
+        deployMessage={deployMessage}
+        onDeploy={handleDeploy}
+      />
 
       {/* Connection status banner */}
       <ConnectionStatus isConnected={ws.isConnected} error={ws.error} />
@@ -401,6 +437,15 @@ function App() {
                 )}
               </button>
             )}
+
+            {/* Settings button */}
+            <button
+              onClick={openSettings}
+              className="p-1 -m-0.5 text-pi-muted hover:text-pi-text transition-colors"
+              title="Settings"
+            >
+              <SettingsIcon className="w-3.5 h-3.5" />
+            </button>
 
             {/* Context window progress */}
             <span 

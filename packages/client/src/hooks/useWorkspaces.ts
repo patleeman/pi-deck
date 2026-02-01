@@ -82,6 +82,7 @@ interface UseWorkspacesReturn {
   refreshSessions: () => void;
   refreshModels: () => void;
   refreshCommands: () => void;
+  deploy: () => void;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 224;
@@ -728,5 +729,6 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'getCommands', workspaceId })
       ),
+    deploy: () => send({ type: 'deploy' }),
   };
 }
