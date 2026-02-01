@@ -160,6 +160,93 @@ export interface WsGetCommandsMessage extends WorkspaceScopedMessage {
   type: 'getCommands';
 }
 
+// Session operations
+export interface WsForkMessage extends WorkspaceScopedMessage {
+  type: 'fork';
+  entryId: string;
+}
+
+export interface WsGetForkMessagesMessage extends WorkspaceScopedMessage {
+  type: 'getForkMessages';
+}
+
+export interface WsSetSessionNameMessage extends WorkspaceScopedMessage {
+  type: 'setSessionName';
+  name: string;
+}
+
+export interface WsExportHtmlMessage extends WorkspaceScopedMessage {
+  type: 'exportHtml';
+  outputPath?: string;
+}
+
+// Model/Thinking cycling
+export interface WsCycleModelMessage extends WorkspaceScopedMessage {
+  type: 'cycleModel';
+  direction?: 'forward' | 'backward';
+}
+
+export interface WsCycleThinkingLevelMessage extends WorkspaceScopedMessage {
+  type: 'cycleThinkingLevel';
+}
+
+// Mode settings
+export interface WsSetSteeringModeMessage extends WorkspaceScopedMessage {
+  type: 'setSteeringMode';
+  mode: 'all' | 'one-at-a-time';
+}
+
+export interface WsSetFollowUpModeMessage extends WorkspaceScopedMessage {
+  type: 'setFollowUpMode';
+  mode: 'all' | 'one-at-a-time';
+}
+
+export interface WsSetAutoCompactionMessage extends WorkspaceScopedMessage {
+  type: 'setAutoCompaction';
+  enabled: boolean;
+}
+
+export interface WsSetAutoRetryMessage extends WorkspaceScopedMessage {
+  type: 'setAutoRetry';
+  enabled: boolean;
+}
+
+export interface WsAbortRetryMessage extends WorkspaceScopedMessage {
+  type: 'abortRetry';
+}
+
+// Bash execution
+export interface WsBashMessage extends WorkspaceScopedMessage {
+  type: 'bash';
+  command: string;
+}
+
+export interface WsAbortBashMessage extends WorkspaceScopedMessage {
+  type: 'abortBash';
+}
+
+// Stats
+export interface WsGetSessionStatsMessage extends WorkspaceScopedMessage {
+  type: 'getSessionStats';
+}
+
+export interface WsGetLastAssistantTextMessage extends WorkspaceScopedMessage {
+  type: 'getLastAssistantText';
+}
+
+// Server management
+export interface WsDeployMessage {
+  type: 'deploy';
+}
+
+// Questionnaire response (user answered questions)
+export interface WsQuestionnaireResponseMessage extends WorkspaceScopedMessage {
+  type: 'questionnaireResponse';
+  toolCallId: string;
+  answers: QuestionnaireAnswer[];
+  cancelled: boolean;
+}
+
 export type WsClientMessage =
   // Workspace management (not scoped to a workspace)
   | WsOpenWorkspaceMessage
@@ -189,7 +276,31 @@ export type WsClientMessage =
   | WsGetMessagesMessage
   | WsGetSessionsMessage
   | WsGetModelsMessage
-  | WsGetCommandsMessage;
+  | WsGetCommandsMessage
+  // Session operations
+  | WsForkMessage
+  | WsGetForkMessagesMessage
+  | WsSetSessionNameMessage
+  | WsExportHtmlMessage
+  // Model/Thinking cycling
+  | WsCycleModelMessage
+  | WsCycleThinkingLevelMessage
+  // Mode settings
+  | WsSetSteeringModeMessage
+  | WsSetFollowUpModeMessage
+  | WsSetAutoCompactionMessage
+  | WsSetAutoRetryMessage
+  | WsAbortRetryMessage
+  // Bash execution
+  | WsBashMessage
+  | WsAbortBashMessage
+  // Stats
+  | WsGetSessionStatsMessage
+  | WsGetLastAssistantTextMessage
+  // Server management
+  | WsDeployMessage
+  // Questionnaire
+  | WsQuestionnaireResponseMessage;
 
 // ============================================================================
 // WebSocket Messages (Server -> Client)
@@ -420,6 +531,78 @@ export interface WsErrorEvent {
   workspaceId?: string; // Optional - errors can be global or workspace-scoped
 }
 
+export interface WsDeployStatusEvent {
+  type: 'deployStatus';
+  status: 'building' | 'restarting' | 'error';
+  message?: string;
+}
+
+// Fork response
+export interface WsForkResultEvent {
+  type: 'forkResult';
+  workspaceId: string;
+  success: boolean;
+  text?: string;
+  error?: string;
+}
+
+// Fork messages response
+export interface WsForkMessagesEvent {
+  type: 'forkMessages';
+  workspaceId: string;
+  messages: Array<{ entryId: string; text: string }>;
+}
+
+// Export HTML response
+export interface WsExportHtmlResultEvent {
+  type: 'exportHtmlResult';
+  workspaceId: string;
+  success: boolean;
+  path?: string;
+  error?: string;
+}
+
+// Session stats response
+export interface WsSessionStatsEvent {
+  type: 'sessionStats';
+  workspaceId: string;
+  stats: SessionStats;
+}
+
+// Last assistant text response
+export interface WsLastAssistantTextEvent {
+  type: 'lastAssistantText';
+  workspaceId: string;
+  text: string | null;
+}
+
+// Bash execution events
+export interface WsBashStartEvent {
+  type: 'bashStart';
+  workspaceId: string;
+  command: string;
+}
+
+export interface WsBashOutputEvent {
+  type: 'bashOutput';
+  workspaceId: string;
+  chunk: string;
+}
+
+export interface WsBashEndEvent {
+  type: 'bashEnd';
+  workspaceId: string;
+  result: BashResult;
+}
+
+// Questionnaire request (tool needs user input)
+export interface WsQuestionnaireRequestEvent {
+  type: 'questionnaireRequest';
+  workspaceId: string;
+  toolCallId: string;
+  questions: QuestionnaireQuestion[];
+}
+
 export type WsServerEvent =
   // Connection & workspace management
   | WsConnectedEvent
@@ -445,7 +628,19 @@ export type WsServerEvent =
   | WsToolEndEvent
   | WsCompactionStartEvent
   | WsCompactionEndEvent
-  | WsErrorEvent;
+  | WsErrorEvent
+  | WsDeployStatusEvent
+  // New events
+  | WsForkResultEvent
+  | WsForkMessagesEvent
+  | WsExportHtmlResultEvent
+  | WsSessionStatsEvent
+  | WsLastAssistantTextEvent
+  | WsBashStartEvent
+  | WsBashOutputEvent
+  | WsBashEndEvent
+  // Questionnaire
+  | WsQuestionnaireRequestEvent;
 
 // ============================================================================
 // Data Types
@@ -467,6 +662,9 @@ export interface SessionState {
   isStreaming: boolean;
   isCompacting: boolean;
   autoCompactionEnabled: boolean;
+  autoRetryEnabled: boolean;
+  steeringMode: 'all' | 'one-at-a-time';
+  followUpMode: 'all' | 'one-at-a-time';
   messageCount: number;
   tokens: TokenUsage;
   contextWindowPercent: number; // 0-100
@@ -569,6 +767,41 @@ export interface MessageUpdate {
 }
 
 // ============================================================================
+// Session Stats
+// ============================================================================
+
+export interface SessionStats {
+  sessionFile: string | undefined;
+  sessionId: string;
+  userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
+  totalMessages: number;
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  cost: number;
+}
+
+// ============================================================================
+// Bash Execution
+// ============================================================================
+
+export interface BashResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  truncated: boolean;
+}
+
+// ============================================================================
 // Slash Commands
 // ============================================================================
 
@@ -581,4 +814,59 @@ export interface SlashCommand {
   source: 'extension' | 'template' | 'skill';
   /** File path to the command source (if available) */
   path?: string;
+}
+
+// ============================================================================
+// Questionnaire Types
+// ============================================================================
+
+export interface QuestionnaireOption {
+  /** The value returned when selected */
+  value: string;
+  /** Display label for the option */
+  label: string;
+  /** Optional description shown below label */
+  description?: string;
+}
+
+export interface QuestionnaireQuestion {
+  /** Unique identifier for this question */
+  id: string;
+  /** Short contextual label for tab bar (defaults to Q1, Q2) */
+  label?: string;
+  /** The full question text to display */
+  prompt: string;
+  /** Available options to choose from */
+  options: QuestionnaireOption[];
+  /** Allow 'Type something' option (default: true) */
+  allowOther?: boolean;
+}
+
+export interface QuestionnaireAnswer {
+  /** Question ID */
+  id: string;
+  /** Selected or typed value */
+  value: string;
+  /** Display label for the answer */
+  label: string;
+  /** Whether the answer was a custom text input */
+  wasCustom: boolean;
+  /** 1-based index of selected option (if not custom) */
+  index?: number;
+}
+
+export interface QuestionnaireRequest {
+  /** Tool call ID that requested the questionnaire */
+  toolCallId: string;
+  /** Questions to present to the user */
+  questions: QuestionnaireQuestion[];
+}
+
+export interface QuestionnaireResponse {
+  /** Tool call ID this response is for */
+  toolCallId: string;
+  /** User's answers */
+  answers: QuestionnaireAnswer[];
+  /** Whether the user cancelled */
+  cancelled: boolean;
 }

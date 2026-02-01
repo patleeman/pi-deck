@@ -9,12 +9,14 @@ import {
 } from '@mariozechner/pi-coding-agent';
 import type { ImageContent, TextContent } from '@mariozechner/pi-ai';
 import type {
+  BashResult,
   ChatMessage,
   ImageAttachment,
   MessageContent,
   ModelInfo,
   SessionInfo,
   SessionState,
+  SessionStats,
   SessionEvent,
   SlashCommand,
   ThinkingLevel,
@@ -296,7 +298,10 @@ export class PiSession extends EventEmitter {
       thinkingLevel: this.session.thinkingLevel as ThinkingLevel,
       isStreaming: this.session.isStreaming,
       isCompacting: false,
-      autoCompactionEnabled: true,
+      autoCompactionEnabled: this.session.autoCompactionEnabled,
+      autoRetryEnabled: this.session.autoRetryEnabled,
+      steeringMode: this.session.steeringMode,
+      followUpMode: this.session.followUpMode,
       messageCount: messages.length,
       tokens,
       contextWindowPercent,
@@ -462,5 +467,197 @@ export class PiSession extends EventEmitter {
    */
   isActive(): boolean {
     return this.session?.isStreaming ?? false;
+  }
+
+  // ============================================================================
+  // Session Operations
+  // ============================================================================
+
+  /**
+   * Fork the conversation at a specific message entry
+   */
+  async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    const result = await this.session.fork(entryId);
+    return { text: result.selectedText, cancelled: result.cancelled };
+  }
+
+  /**
+   * Get messages available for forking
+   */
+  getForkMessages(): Array<{ entryId: string; text: string }> {
+    if (!this.session) {
+      return [];
+    }
+    return this.session.getUserMessagesForForking();
+  }
+
+  /**
+   * Set the session name
+   */
+  setSessionName(name: string): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.setSessionName(name);
+  }
+
+  /**
+   * Export the session to HTML
+   */
+  async exportHtml(outputPath?: string): Promise<string> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    return await this.session.exportToHtml(outputPath);
+  }
+
+  // ============================================================================
+  // Model/Thinking Cycling
+  // ============================================================================
+
+  /**
+   * Cycle to the next/previous model
+   */
+  async cycleModel(direction: 'forward' | 'backward' = 'forward'): Promise<{ model: ModelInfo; thinkingLevel: ThinkingLevel; isScoped: boolean } | null> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    const result = await this.session.cycleModel(direction);
+    if (!result) return null;
+    return {
+      model: {
+        id: result.model.id,
+        name: result.model.name,
+        provider: result.model.provider,
+        reasoning: result.model.reasoning || false,
+        contextWindow: result.model.contextWindow || 0,
+      },
+      thinkingLevel: result.thinkingLevel as ThinkingLevel,
+      isScoped: result.isScoped,
+    };
+  }
+
+  /**
+   * Cycle to the next thinking level
+   */
+  cycleThinkingLevel(): ThinkingLevel | null {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    const level = this.session.cycleThinkingLevel();
+    return level ? (level as ThinkingLevel) : null;
+  }
+
+  // ============================================================================
+  // Mode Settings
+  // ============================================================================
+
+  /**
+   * Set steering mode (how steering messages are delivered)
+   */
+  setSteeringMode(mode: 'all' | 'one-at-a-time'): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.setSteeringMode(mode);
+  }
+
+  /**
+   * Set follow-up mode (how follow-up messages are delivered)
+   */
+  setFollowUpMode(mode: 'all' | 'one-at-a-time'): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.setFollowUpMode(mode);
+  }
+
+  /**
+   * Enable/disable auto-compaction
+   */
+  setAutoCompaction(enabled: boolean): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.setAutoCompactionEnabled(enabled);
+  }
+
+  /**
+   * Enable/disable auto-retry on errors
+   */
+  setAutoRetry(enabled: boolean): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.setAutoRetryEnabled(enabled);
+  }
+
+  /**
+   * Abort an ongoing retry attempt
+   */
+  abortRetry(): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.abortRetry();
+  }
+
+  // ============================================================================
+  // Bash Execution
+  // ============================================================================
+
+  /**
+   * Execute a bash command
+   */
+  async executeBash(command: string, onChunk?: (chunk: string) => void): Promise<BashResult> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    const result = await this.session.executeBash(command, onChunk);
+    return {
+      stdout: result.output,
+      stderr: '',  // Pi SDK combines stdout/stderr into output
+      exitCode: result.exitCode ?? null,
+      signal: result.cancelled ? 'SIGTERM' : null,
+      timedOut: false,  // Pi SDK uses cancelled for this
+      truncated: result.truncated,
+    };
+  }
+
+  /**
+   * Abort a running bash command
+   */
+  abortBash(): void {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    this.session.abortBash();
+  }
+
+  // ============================================================================
+  // Stats
+  // ============================================================================
+
+  /**
+   * Get detailed session statistics
+   */
+  getSessionStats(): SessionStats {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    return this.session.getSessionStats();
+  }
+
+  /**
+   * Get the last assistant response text
+   */
+  getLastAssistantText(): string | null {
+    if (!this.session) {
+      return null;
+    }
+    return this.session.getLastAssistantText() ?? null;
   }
 }

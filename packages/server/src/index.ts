@@ -41,6 +41,17 @@ const workspaceManager = getWorkspaceManager(config.allowedDirectories);
 // Track which workspaces each WebSocket is attached to
 const clientWorkspaces = new Map<WebSocket, Set<string>>();
 
+/**
+ * Broadcast an event to all clients attached to a specific workspace
+ */
+function broadcastToWorkspace(workspaceId: string, event: WsServerEvent): void {
+  for (const [ws, workspaceIds] of clientWorkspaces.entries()) {
+    if (workspaceIds.has(workspaceId) && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(event));
+    }
+  }
+}
+
 // Forward workspace manager events to connected clients
 workspaceManager.on('event', (event: WsServerEvent) => {
   // Broadcast to all clients that are attached to this workspace
@@ -62,7 +73,7 @@ workspaceManager.on('bufferedEvent', (event: WsServerEvent) => {
 });
 
 // Health check endpoint
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: express.Request, res: express.Response) => {
   res.json({
     status: 'ok',
     allowedDirectories: config.allowedDirectories,
@@ -158,16 +169,21 @@ async function handleMessage(
     }
 
     case 'closeWorkspace': {
-      // Detach this client from the workspace
-      clientWorkspaces.get(ws)?.delete(message.workspaceId);
+      // Broadcast close event to ALL clients attached to this workspace BEFORE closing
+      // This ensures all clients (including other browser tabs) are notified
+      const closeEvent: WsServerEvent = {
+        type: 'workspaceClosed',
+        workspaceId: message.workspaceId,
+      };
+      broadcastToWorkspace(message.workspaceId, closeEvent);
+      
+      // Detach ALL clients from this workspace (not just the requesting one)
+      for (const [client, workspaceIds] of clientWorkspaces.entries()) {
+        workspaceIds.delete(message.workspaceId);
+      }
       
       // Actually close and dispose the workspace
       workspaceManager.closeWorkspace(message.workspaceId);
-      
-      send(ws, {
-        type: 'workspaceClosed',
-        workspaceId: message.workspaceId,
-      });
       break;
     }
 
@@ -677,7 +693,7 @@ function send(ws: WebSocket, event: WsServerEvent) {
 
 // SPA fallback - serve index.html for unmatched routes
 if (existsSync(clientDistPath)) {
-  app.get('*', (_req, res) => {
+  app.get('*', (_req: express.Request, res: express.Response) => {
     res.sendFile(join(clientDistPath, 'index.html'));
   });
 }

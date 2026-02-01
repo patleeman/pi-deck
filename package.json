@@ -17,13 +17,28 @@
     "typecheck": "npm run typecheck --workspaces",
     "service:install": "./scripts/install-service.sh",
     "service:uninstall": "./scripts/uninstall-service.sh",
+    "deploy": "./scripts/deploy.sh",
     "background:start": "./scripts/start-background.sh start",
     "background:stop": "./scripts/start-background.sh stop",
     "background:status": "./scripts/start-background.sh status",
     "background:logs": "./scripts/start-background.sh logs"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2",
-    "typescript": "^5.7.3"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.19.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.7.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.2",
+    "autoprefixer": "^10.4.24",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17"
   }
 }
