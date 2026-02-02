@@ -77,58 +77,165 @@ npm start
 
 In production, the server serves both the API and the static frontend on port 3001.
 
-### Running as a Background Service (macOS)
+---
 
-#### Option 1: launchd Service (Recommended)
+## Running on a Mac mini with Tailscale
 
-Install as a persistent service that starts automatically on login:
+This section covers how to set up Pi Web UI as a persistent service on a Mac mini, accessible securely from anywhere via Tailscale.
+
+### Why This Setup?
+
+- **Always-on access**: Your coding agent runs 24/7 on your Mac mini
+- **Secure remote access**: Tailscale provides encrypted, private networking without exposing ports to the internet
+- **Access from any device**: Use Pi Web UI from your laptop, phone, or tablet anywhere in the world
+
+### Step 1: Install Tailscale on Your Mac mini
+
+1. Download Tailscale from the [Mac App Store](https://apps.apple.com/app/tailscale/id1475387142) or [tailscale.com](https://tailscale.com/download)
+2. Open Tailscale and sign in
+3. Your Mac mini will get a Tailscale IP (e.g., `100.x.y.z`) and hostname (e.g., `mac-mini.tailnet-name.ts.net`)
+
+### Step 2: Install Pi Web UI
+
+```bash
+# Clone the repo
+git clone https://github.com/patleeman/pi-web-ui.git
+cd pi-web-ui
+
+# Install dependencies
+npm install
+
+# Build for production
+npm run build
+```
+
+### Step 3: Configure Allowed Directories
+
+Create a config file to control which directories can be accessed:
+
+```bash
+# Create config directory
+mkdir -p ~/.config/pi-web-ui
+
+# Create config file
+cat > ~/.config/pi-web-ui/config.json << 'EOF'
+{
+  "port": 3001,
+  "host": "0.0.0.0",
+  "allowedDirectories": [
+    "~/projects",
+    "~/code",
+    "~/work"
+  ]
+}
+EOF
+```
+
+Edit `allowedDirectories` to match your project locations.
+
+### Step 4: Install as a Background Service
+
+Install Pi Web UI as a launchd service that starts automatically on boot:
 
 ```bash
 npm run service:install
 ```
 
-This creates a launchd service that:
+This creates a persistent service that:
 - Starts automatically when you log in
 - Restarts if it crashes
 - Logs to `~/Library/Logs/pi-web-ui/`
 
-Service management:
-```bash
-# Start/stop manually
-launchctl start com.pi-web-ui.server
-launchctl stop com.pi-web-ui.server
+### Step 5: Access from Other Devices
 
-# View status
+1. Install Tailscale on your other devices (laptop, phone, etc.)
+2. Sign in with the same account
+3. Access Pi Web UI at: `http://mac-mini:3001` or `http://100.x.y.z:3001`
+
+Replace `mac-mini` with your Mac mini's Tailscale hostname.
+
+### Service Management
+
+```bash
+# Check status
 launchctl list | grep pi-web-ui
 
 # View logs
 tail -f ~/Library/Logs/pi-web-ui/stdout.log
 
+# Restart after config changes
+launchctl stop com.pi-web-ui.server
+launchctl start com.pi-web-ui.server
+
 # Uninstall
 npm run service:uninstall
 ```
 
-#### Option 2: Simple Background Process
+### Optional: Auto-Updates
 
-For quick testing without auto-start:
+Set up automatic updates from git:
 
 ```bash
-npm run background:start   # Start server in background
-npm run background:stop    # Stop server
-npm run background:status  # Check if running
-npm run background:logs    # Tail the logs
+npm run update:install
 ```
 
-## Configuration
+This checks for updates every 5 minutes and automatically rebuilds/restarts if changes are detected.
 
-### Config File
+### Customization
 
-Create `pi-web-ui.config.json` in one of these locations:
-- Current working directory
-- `~/.config/pi-web-ui/config.json`
-- `~/.pi-web-ui.config.json`
+#### Change the Port
 
-Example configuration:
+Edit your config file or set an environment variable:
+
+```bash
+# In config.json
+{
+  "port": 8080,
+  ...
+}
+
+# Or via environment (requires editing the launchd plist)
+```
+
+#### Restrict to Localhost Only
+
+If you want to disable network access and only allow local connections:
+
+```json
+{
+  "host": "127.0.0.1",
+  ...
+}
+```
+
+#### Multiple Allowed Directories
+
+Add as many project directories as needed:
+
+```json
+{
+  "allowedDirectories": [
+    "~/projects",
+    "~/work",
+    "/Volumes/External/repos",
+    "/opt/development"
+  ]
+}
+```
+
+---
+
+## Configuration Reference
+
+### Config File Locations
+
+Create `pi-web-ui.config.json` in one of these locations (checked in order):
+
+1. Current working directory
+2. `~/.config/pi-web-ui/config.json`
+3. `~/.pi-web-ui.config.json`
+
+### Config Options
 
 ```json
 {
@@ -136,63 +243,77 @@ Example configuration:
   "host": "0.0.0.0",
   "allowedDirectories": [
     "~/projects",
-    "~/code",
-    "/work/repos"
+    "~/code"
   ]
 }
 ```
 
-Set `host` to `127.0.0.1` to restrict access to localhost only.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `port` | 3001 | Server port |
+| `host` | 0.0.0.0 | Bind address (`127.0.0.1` for localhost only) |
+| `allowedDirectories` | Home directory | Directories accessible via the UI |
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 3001 | Backend server port |
-| `HOST` | 0.0.0.0 | Host to bind to (use `127.0.0.1` for localhost only) |
+| `HOST` | 0.0.0.0 | Host to bind to |
 | `PI_ALLOWED_DIRS` | Home directory | Colon-separated list of allowed directories |
 
 Example:
 ```bash
-# Expose on network with custom allowed dirs
-PI_ALLOWED_DIRS="~/projects:~/work:/opt/repos" npm start
-
-# Restrict to localhost only
-HOST=127.0.0.1 npm start
+PI_ALLOWED_DIRS="~/projects:~/work" PORT=8080 npm start
 ```
 
-### Security
+### API Keys
 
-**Important**: The allowlist controls which directories can be accessed through the web UI. By default, only the user's home directory is allowed.
-
-For untrusted networks, you should:
-1. Configure a restrictive allowlist
-2. Use a reverse proxy with authentication
-3. Consider running behind a VPN
-
-API keys are read from the standard locations:
+API keys are read from standard locations:
 - Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
 - Pi's auth storage (`~/.pi/agent/auth.json`)
 
 ### Data Storage
 
-UI state is persisted to a SQLite database at:
-
+UI state is persisted to SQLite at:
 ```
 ~/.config/pi-web-ui/ui-state.db
 ```
 
-This enables consistent UI state across browser sessions and devices connecting to the same server.
-
 **Persisted state includes:**
-- Open workspaces (which directories are open)
-- Active workspace (which tab is selected)
-- Active session per workspace (which conversation is open)
+- Open workspaces
+- Active workspace and session
 - Selected model per workspace
 - Thinking level per workspace
 - Sidebar width
 - Theme
-- Draft inputs per workspace (unsent message text)
+- Draft inputs
+
+---
+
+## Background Service Options
+
+### Option 1: launchd Service (Recommended)
+
+For persistent service that starts on login:
+
+```bash
+npm run service:install    # Install and start
+npm run service:uninstall  # Remove
+```
+
+### Option 2: Simple Background Process
+
+For quick testing without auto-start:
+
+```bash
+npm run background:start   # Start
+npm run background:stop    # Stop
+npm run background:status  # Check status
+npm run background:logs    # View logs
+```
+
+---
 
 ## Project Structure
 
@@ -206,68 +327,28 @@ pi-web-ui/
 │   │   └── src/
 │   │       ├── index.ts           # Express + WebSocket server
 │   │       ├── config.ts          # Configuration loading
-│   │       ├── directory-browser.ts # Directory browsing
-│   │       ├── session-orchestrator.ts # Multi-workspace management
-│   │       ├── pi-session.ts      # Pi SDK integration
-│   │       └── ui-state.ts        # SQLite UI state persistence
+│   │       ├── directory-browser.ts
+│   │       ├── session-orchestrator.ts
+│   │       ├── pi-session.ts
+│   │       └── ui-state.ts
 │   └── client/                    # React frontend
 │       └── src/
 │           ├── App.tsx
 │           ├── hooks/
-│           │   └── useWorkspaces.ts  # Multi-workspace state
 │           └── components/
-│               ├── ChatView.tsx
-│               ├── DirectoryBrowser.tsx
-│               ├── WorkspaceTabs.tsx
-│               ├── MessageBubble.tsx
-│               ├── InputEditor.tsx
-│               └── ...
-├── pi-web-ui.config.example.json  # Example config
-├── package.json                   # Monorepo root
+├── scripts/                       # Service management scripts
+│   ├── install-service.sh         # Install launchd service
+│   ├── uninstall-service.sh       # Remove launchd service
+│   ├── start-background.sh        # Simple background process
+│   ├── deploy.sh                  # Build and restart
+│   ├── auto-update.sh             # Git pull and rebuild
+│   └── install-auto-update.sh     # Install auto-update job
+├── pi-web-ui.config.example.json
+├── package.json
 └── README.md
 ```
 
-## WebSocket Protocol
-
-The client and server communicate via WebSocket with JSON messages.
-
-### Client → Server
-
-#### Workspace Management
-| Message | Description |
-|---------|-------------|
-| `openWorkspace` | Open a directory as a workspace |
-| `closeWorkspace` | Close a workspace |
-| `listWorkspaces` | Get list of open workspaces |
-| `browseDirectory` | Browse directory contents |
-
-#### Session Operations (require `workspaceId`)
-| Message | Description |
-|---------|-------------|
-| `prompt` | Send a user message |
-| `steer` | Interrupt agent with new instruction |
-| `followUp` | Queue message for after agent finishes |
-| `abort` | Cancel current operation |
-| `setModel` | Change the model |
-| `setThinkingLevel` | Change thinking level |
-| `newSession` | Start a new session |
-| `switchSession` | Switch to different session |
-| `compact` | Manually trigger compaction |
-
-### Server → Client
-
-| Event | Description |
-|-------|-------------|
-| `connected` | Initial connection with allowed roots |
-| `workspaceOpened` | Workspace opened with initial state |
-| `workspaceClosed` | Workspace was closed |
-| `directoryList` | Directory browser results |
-| `state` | State update (includes `workspaceId`) |
-| `messages` | Full message list |
-| `agentStart/End` | Agent lifecycle |
-| `messageStart/Update/End` | Message streaming |
-| `toolStart/Update/End` | Tool execution |
-| `error` | Error notification |
+---
 
 ## Usage
 
@@ -275,51 +356,46 @@ The client and server communicate via WebSocket with JSON messages.
 
 1. Click "+ dir" in the workspace tabs or press `⌘O` / `Ctrl+O`
 2. Navigate the directory browser (only allowed directories are shown)
-3. Click `[open]` on a directory or `[open here]` to open the current location
+3. Click `[open]` to open a directory as a workspace
 4. The workspace opens in a new tab
 
-### Managing Multiple Workspaces
+### Managing Workspaces
 
-- Click tabs to switch between open workspaces
-- Each workspace maintains its own:
-  - Chat history
-  - Session state
-  - Model settings
-  - Streaming state
-- Close workspaces with the × button on the tab
+- Click tabs to switch between workspaces
+- Each workspace maintains its own chat history, session state, and settings
+- Close workspaces with the × button
 - Activity indicator shows which workspaces are streaming
 
-### Directory Browser
+### Keyboard Shortcuts
 
-- Shows only directories (not files)
-- `●` indicator shows directories with existing Pi sessions
-- Navigate with click, go back with `..`
-- Respects the allowlist - directories outside allowed paths are hidden
+| Key | Action |
+|-----|--------|
+| `⌘O` / `Ctrl+O` | Open directory browser |
+| `⌘,` / `Ctrl+,` | Open settings |
+| `⌘?` / `Ctrl+?` | Show hotkeys |
+| `⌘Enter` | Send message |
+| `Escape` | Close dialogs |
 
-## Customization
+---
 
-### Theming
+## Theming
 
-The UI uses TailwindCSS with a custom Pi-inspired color scheme. Modify `tailwind.config.js` to customize:
+The UI includes multiple themes. Change via Settings (`⌘,`) or the theme selector.
 
-```js
-colors: {
-  pi: {
-    bg: '#0d0d0d',
-    surface: '#1a1a1a',
-    accent: '#7c3aed',
-    // ...
-  }
-}
-```
+To customize colors, modify `packages/client/src/themes.ts`.
 
-### Adding Features
+---
 
-The modular architecture makes it easy to extend:
+## Security Notes
 
-1. **New commands**: Add to `WsClientMessage` type and handle in server
-2. **New UI components**: Add to `components/` and integrate in `App.tsx`
-3. **Custom tools**: Register via Pi's extension system
+- The allowlist controls which directories can be accessed through the web UI
+- By default, only the user's home directory is allowed
+- Tailscale provides secure, encrypted access without exposing ports to the public internet
+- For additional security, consider:
+  - Restricting the allowlist to specific project directories
+  - Using Tailscale ACLs to limit which devices can access the Mac mini
+
+---
 
 ## License
 
