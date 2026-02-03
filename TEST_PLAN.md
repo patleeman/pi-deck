@@ -1,8 +1,8 @@
 # Pi Web UI Test Plan
 
-**Status**: ✅ COMPLETE (Unit + E2E scaffolded)  
+**Status**: ✅ COMPREHENSIVE (563+ tests)  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:34 EST
+**Last Updated**: 2026-02-03 04:16 EST
 
 ---
 
@@ -164,4 +164,12 @@ After every compaction or context reset:
 - 366 tests passing (281 client + 85 server)
 - Added integration tests: multi-pane, state-persistence, SettingsContext
 - Test suite essentially complete with good coverage
+
+### 2026-02-03 04:16 EST
+- 563 tests passing (478 client + 85 server)
+- All component tests now comprehensive and spec-based
+- Added tests for: ConnectionStatus (12), PaneManager (12), improved ScopedModelsDialog (29), ExtensionUIDialog (38)
+- Improved tests for: TreeDialog (26), QuestionnaireUI (24), ForkDialog (22), DiffDisplay (21), WorkspaceTabs (19), SlashMenu (16), StartupDisplay (22)
+- Tests serve as specifications defining correct behavior
+- Fixed StatusBar pluralization bug found by tests
 
