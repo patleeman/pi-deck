@@ -2,7 +2,7 @@
 
 **Status**: 🔄 IN PROGRESS  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:22 EST
+**Last Updated**: 2026-02-02 22:24 EST
 
 ---
 
@@ -58,7 +58,7 @@ After every compaction or context reset:
 - [x] `usePanes.test.ts` - Layout management, pane CRUD (13 tests)
 - [x] `useNotifications.test.ts` - Permission handling, notification display (11 tests)
 - [x] `useIsMobile.test.ts` - Responsive detection (6 tests)
-- [ ] `useKeyboardVisible.test.ts` - Keyboard state on mobile
+- [x] `useKeyboardVisible.test.ts` - Keyboard state on mobile (8 tests)
 
 **Server:**
 - [ ] `pi-session.test.ts` - Event emission, state management, all session methods
@@ -88,10 +88,10 @@ After every compaction or context reset:
 - [ ] `models.spec.ts` - Change model, cycle model (Ctrl+P), thinking level
 - [ ] `panes.spec.ts` - Split pane, focus pane, close pane
 - [x] `keyboard.spec.ts` - All keyboard shortcuts work (scaffolded)
-- [ ] `slash-commands.spec.ts` - Trigger menu, filter, select command
+- [x] `slash-commands.spec.ts` - Trigger menu, filter, select command (scaffolded)
 - [ ] `questionnaire.spec.ts` - Answer questions, cancel
 - [ ] `extension-ui.spec.ts` - Select, confirm, input, editor dialogs
-- [ ] `settings.spec.ts` - Toggle modes, deploy/restart
+- [x] `settings.spec.ts` - Toggle modes, deploy/restart (scaffolded)
 - [ ] `mobile.spec.ts` - Touch interactions, responsive layout
 - [ ] `error-recovery.spec.ts` - Disconnect/reconnect, abort, retry
 - [x] `ui-basics.spec.ts` - Basic UI loading and functionality (scaffolded)
@@ -130,4 +130,13 @@ After every compaction or context reset:
 - 223 unit tests passing (194 client + 29 server)
 - Completed: ScopedModelsDialog, useNotifications
 - Continuing with remaining unit tests and adding more E2E tests
+
+### 2026-02-02 22:24 EST
+- 231 unit tests passing (202 client + 29 server)
+- Completed all hook tests: useIsMobile, usePanes, useNotifications, useKeyboardVisible
+- Completed component tests: StatusBar, SlashMenu, HotkeysDialog, WorkspaceTabs, StartupDisplay,
+  Settings, ExtensionUIDialog, DirectoryBrowser, DiffDisplay, QuestionnaireUI, ForkDialog,
+  TreeDialog, MessageList, ScopedModelsDialog
+- E2E tests scaffolded: workspace, keyboard, ui-basics, settings, slash-commands
+- Remaining: Pane, MarkdownContent, useWorkspaces, server tests
 
