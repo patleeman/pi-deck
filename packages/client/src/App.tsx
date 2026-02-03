@@ -21,8 +21,9 @@ import { ForkDialog } from './components/ForkDialog';
 import { HotkeysDialog } from './components/HotkeysDialog';
 import { TreeDialog } from './components/TreeDialog';
 import { ExtensionUIDialog } from './components/ExtensionUIDialog';
+import { CustomUIDialog } from './components/CustomUIDialog';
 import { useSettings } from './contexts/SettingsContext';
-import type { SessionTreeNode, ExtensionUIRequest, ExtensionUIResponse } from '@pi-web-ui/shared';
+import type { SessionTreeNode, ExtensionUIRequest, ExtensionUIResponse, CustomUIState, CustomUINode, CustomUIInputEvent } from '@pi-web-ui/shared';
 
 const WS_URL = import.meta.env.DEV
   ? 'ws://localhost:3001/ws'
@@ -59,6 +60,12 @@ function App() {
   // Extension UI state
   const [extensionUIRequest, setExtensionUIRequest] = useState<{
     request: ExtensionUIRequest;
+    slotId: string;
+  } | null>(null);
+  
+  // Custom UI state (for ctx.ui.custom())
+  const [customUIState, setCustomUIState] = useState<{
+    state: CustomUIState;
     slotId: string;
   } | null>(null);
   
@@ -143,6 +150,60 @@ function App() {
 
     window.addEventListener('pi:extensionUIRequest', handleExtensionUIRequest as EventListener);
     return () => window.removeEventListener('pi:extensionUIRequest', handleExtensionUIRequest as EventListener);
+  }, []);
+
+  // Listen for custom UI events (ctx.ui.custom())
+  useEffect(() => {
+    const handleCustomUIStart = (e: CustomEvent<{
+      workspaceId: string;
+      sessionSlotId?: string;
+      state: CustomUIState;
+    }>) => {
+      const slotId = e.detail.sessionSlotId || 'default';
+      setCustomUIState({
+        state: e.detail.state,
+        slotId,
+      });
+    };
+
+    const handleCustomUIUpdate = (e: CustomEvent<{
+      workspaceId: string;
+      sessionSlotId?: string;
+      sessionId: string;
+      root: CustomUINode;
+    }>) => {
+      setCustomUIState((prev) => {
+        if (!prev || prev.state.sessionId !== e.detail.sessionId) return prev;
+        return {
+          ...prev,
+          state: {
+            ...prev.state,
+            root: e.detail.root,
+          },
+        };
+      });
+    };
+
+    const handleCustomUIClose = (e: CustomEvent<{
+      workspaceId: string;
+      sessionSlotId?: string;
+      sessionId: string;
+    }>) => {
+      setCustomUIState((prev) => {
+        if (!prev || prev.state.sessionId !== e.detail.sessionId) return prev;
+        return null;
+      });
+    };
+
+    window.addEventListener('pi:customUIStart', handleCustomUIStart as EventListener);
+    window.addEventListener('pi:customUIUpdate', handleCustomUIUpdate as EventListener);
+    window.addEventListener('pi:customUIClose', handleCustomUIClose as EventListener);
+    
+    return () => {
+      window.removeEventListener('pi:customUIStart', handleCustomUIStart as EventListener);
+      window.removeEventListener('pi:customUIUpdate', handleCustomUIUpdate as EventListener);
+      window.removeEventListener('pi:customUIClose', handleCustomUIClose as EventListener);
+    };
   }, []);
 
   // Keyboard shortcuts
@@ -241,6 +302,25 @@ function App() {
       setExtensionUIRequest(null);
     }
   }, [extensionUIRequest, ws]);
+
+  // Handle custom UI input
+  const handleCustomUIInput = useCallback((input: CustomUIInputEvent) => {
+    if (customUIState) {
+      ws.sendCustomUIInput(customUIState.slotId, input);
+    }
+  }, [customUIState, ws]);
+
+  // Handle custom UI close (user cancelled)
+  const handleCustomUIClose = useCallback(() => {
+    if (customUIState) {
+      // Send Escape to signal cancellation
+      ws.sendCustomUIInput(customUIState.slotId, {
+        sessionId: customUIState.state.sessionId,
+        inputType: 'key',
+        key: 'Escape',
+      });
+    }
+  }, [customUIState, ws]);
 
   // Loading state
   if (!ws.isConnected && ws.isConnecting) {
@@ -373,6 +453,15 @@ function App() {
         <ExtensionUIDialog
           request={extensionUIRequest.request}
           onResponse={handleExtensionUIResponse}
+        />
+      )}
+
+      {/* Custom UI dialog (for ctx.ui.custom()) */}
+      {customUIState && (
+        <CustomUIDialog
+          state={customUIState.state}
+          onInput={handleCustomUIInput}
+          onClose={handleCustomUIClose}
         />
       )}
 

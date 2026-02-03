@@ -396,12 +396,20 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           newSlot.state = event.state;
           newSlot.messages = event.messages;
           setWorkspaces((prev) =>
-            prev.map((ws) =>
-              ws.id === event.workspaceId
-                ? { ...ws, slots: { ...ws.slots, [event.sessionSlotId]: newSlot } }
-                : ws
-            )
+            prev.map((ws) => {
+              if (ws.id !== event.workspaceId) return ws;
+              
+              // Copy commands from an existing slot if available (faster than waiting for server)
+              const existingSlot = Object.values(ws.slots)[0];
+              if (existingSlot?.commands?.length > 0) {
+                newSlot.commands = existingSlot.commands;
+              }
+              
+              return { ...ws, slots: { ...ws.slots, [event.sessionSlotId]: newSlot } };
+            })
           );
+          // Also fetch commands for the new slot (in case they've changed)
+          send({ type: 'getCommands', workspaceId: event.workspaceId, sessionSlotId: event.sessionSlotId });
           break;
         }
 

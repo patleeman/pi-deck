@@ -20,7 +20,7 @@ interface CustomUIDialogProps {
  * Dialog for rendering custom UI component trees from ctx.ui.custom().
  * Renders the serialized component tree with React equivalents.
  */
-export function CustomUIDialog({ state, onInput, onClose }: CustomUIDialogProps) {
+export function CustomUIDialog({ state, onInput, onClose: _onClose }: CustomUIDialogProps) {
   // Handle keyboard input
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
