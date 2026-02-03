@@ -2,7 +2,7 @@
 
 **Status**: 🔄 IN PROGRESS  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:05 EST
+**Last Updated**: 2026-02-02 22:13 EST
 
 ---
 
@@ -36,28 +36,28 @@ After every compaction or context reset:
 ### Phase 2: Unit Tests (25 files)
 
 **Client Components:**
-- [x] `StatusBar.test.tsx` - State display, git info, context usage
+- [x] `StatusBar.test.tsx` - State display, git info, context usage (10 tests)
 - [ ] `Pane.test.tsx` - Input handling, message display, mode indicators, toolbar actions
 - [ ] `MessageList.test.tsx` - Message rendering, tool call display, streaming state
 - [ ] `MarkdownContent.test.tsx` - Markdown rendering, code blocks, syntax highlighting
-- [ ] `DiffDisplay.test.tsx` - Diff parsing, line highlighting
-- [ ] `SlashMenu.test.tsx` - Command filtering, selection, keyboard nav
+- [x] `DiffDisplay.test.tsx` - Diff parsing, line highlighting (12 tests)
+- [x] `SlashMenu.test.tsx` - Command filtering, selection, keyboard nav (6 tests)
 - [ ] `QuestionnaireUI.test.tsx` - Question rendering, answer submission
-- [ ] `ExtensionUIDialog.test.tsx` - Select, confirm, input, editor dialogs
+- [x] `ExtensionUIDialog.test.tsx` - Select, confirm, input, editor dialogs (24 tests)
 - [ ] `TreeDialog.test.tsx` - Tree rendering, navigation
 - [ ] `ScopedModelsDialog.test.tsx` - Model selection, toggle states
-- [ ] `DirectoryBrowser.test.tsx` - File listing, navigation, selection
-- [ ] `WorkspaceTabs.test.tsx` - Tab switching, close buttons
-- [ ] `Settings.test.tsx` - Toggle states, deploy actions
-- [ ] `HotkeysDialog.test.tsx` - Shortcut rendering
+- [x] `DirectoryBrowser.test.tsx` - File listing, navigation, selection (12 tests)
+- [x] `WorkspaceTabs.test.tsx` - Tab switching, close buttons (10 tests)
+- [x] `Settings.test.tsx` - Toggle states, deploy actions (12 tests)
+- [x] `HotkeysDialog.test.tsx` - Shortcut rendering (9 tests)
 - [ ] `ForkDialog.test.tsx` - Message selection, fork action
-- [ ] `StartupDisplay.test.tsx` - Info rendering
+- [x] `StartupDisplay.test.tsx` - Info rendering (11 tests)
 
 **Client Hooks:**
 - [ ] `useWorkspaces.test.ts` - WebSocket connection, message handling, state updates
-- [ ] `usePanes.test.ts` - Layout management, pane CRUD
+- [x] `usePanes.test.ts` - Layout management, pane CRUD (13 tests)
 - [ ] `useNotifications.test.ts` - Permission handling, notification display
-- [ ] `useIsMobile.test.ts` - Responsive detection
+- [x] `useIsMobile.test.ts` - Responsive detection (6 tests)
 - [ ] `useKeyboardVisible.test.ts` - Keyboard state on mobile
 
 **Server:**
@@ -112,4 +112,10 @@ After every compaction or context reset:
 - Added test scripts to package.json
 - Wrote first unit test (StatusBar) - 10 tests passing
 - Starting Phase 2: Unit Tests
+
+### 2026-02-02 22:13 EST
+- 125 unit tests passing across 11 test files
+- Completed: StatusBar, DiffDisplay, SlashMenu, ExtensionUIDialog, DirectoryBrowser, 
+  WorkspaceTabs, Settings, HotkeysDialog, StartupDisplay, useIsMobile, usePanes
+- Continuing with server-side tests
 
