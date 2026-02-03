@@ -2,7 +2,7 @@
 
 **Status**: 🔄 IN PROGRESS  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:28 EST
+**Last Updated**: 2026-02-02 22:30 EST
 
 ---
 
@@ -78,23 +78,22 @@ After every compaction or context reset:
 - [ ] `state-persistence.test.ts` - Save → reload → restore
 - [ ] `model-switching.test.ts` - Cycle, set, verify
 
-### Phase 4: E2E Tests (15 files)
-- [x] `workspace.spec.ts` - Open workspace, browse directories, close workspace (scaffolded)
-- [ ] `chat-basic.spec.ts` - Send message, receive response, see streaming
-- [ ] `chat-steering.spec.ts` - Steer while streaming, follow-up mode
-- [ ] `tool-calls.spec.ts` - Tool execution display, expand/collapse, copy
-- [ ] `bash.spec.ts` - Run bash command (! and !!), see output
-- [ ] `sessions.spec.ts` - New session, switch session, fork session
-- [ ] `models.spec.ts` - Change model, cycle model (Ctrl+P), thinking level
-- [ ] `panes.spec.ts` - Split pane, focus pane, close pane
-- [x] `keyboard.spec.ts` - All keyboard shortcuts work (scaffolded)
-- [x] `slash-commands.spec.ts` - Trigger menu, filter, select command (scaffolded)
-- [ ] `questionnaire.spec.ts` - Answer questions, cancel
-- [ ] `extension-ui.spec.ts` - Select, confirm, input, editor dialogs
-- [x] `settings.spec.ts` - Toggle modes, deploy/restart (scaffolded)
-- [ ] `mobile.spec.ts` - Touch interactions, responsive layout
-- [ ] `error-recovery.spec.ts` - Disconnect/reconnect, abort, retry
-- [x] `ui-basics.spec.ts` - Basic UI loading and functionality (scaffolded)
+### Phase 4: E2E Tests (16 files) - ALL SCAFFOLDED
+- [x] `workspace.spec.ts` - Open workspace, browse directories, close workspace
+- [x] `chat.spec.ts` - Send message, receive response, streaming
+- [x] `tool-calls.spec.ts` - Tool execution display, expand/collapse
+- [x] `bash.spec.ts` - Run bash command (! and !!)
+- [x] `sessions.spec.ts` - New session, switch session, fork session
+- [x] `models.spec.ts` - Change model, cycle model, thinking level
+- [x] `panes.spec.ts` - Split pane, focus pane, close pane
+- [x] `keyboard.spec.ts` - All keyboard shortcuts work
+- [x] `slash-commands.spec.ts` - Trigger menu, filter, select command
+- [x] `questionnaire.spec.ts` - Answer questions, cancel
+- [x] `extension-ui.spec.ts` - Select, confirm, input, editor dialogs
+- [x] `settings.spec.ts` - Toggle modes, deploy/restart
+- [x] `mobile.spec.ts` - Touch interactions, responsive layout (6 tests)
+- [x] `error-recovery.spec.ts` - Disconnect/reconnect, abort, retry (6 tests)
+- [x] `ui-basics.spec.ts` - Basic UI loading and functionality
 
 ---
 
@@ -149,4 +148,10 @@ After every compaction or context reset:
 - 306 unit tests passing (250 client + 56 server)
 - Completed: MarkdownContent, useWorkspaces data structures, PiSession behavior
 - All Phase 2 unit tests complete!
+
+### 2026-02-02 22:30 EST
+- All E2E tests scaffolded (16 files total)
+- E2E tests cover: workspace, chat, tool-calls, bash, sessions, models, panes,
+  keyboard, slash-commands, questionnaire, extension-ui, settings, mobile, error-recovery
+- Tests ready to run against development server
 
