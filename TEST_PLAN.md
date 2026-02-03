@@ -2,7 +2,7 @@
 
 **Status**: 🔄 IN PROGRESS  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:13 EST
+**Last Updated**: 2026-02-02 22:20 EST
 
 ---
 
@@ -38,19 +38,19 @@ After every compaction or context reset:
 **Client Components:**
 - [x] `StatusBar.test.tsx` - State display, git info, context usage (10 tests)
 - [ ] `Pane.test.tsx` - Input handling, message display, mode indicators, toolbar actions
-- [ ] `MessageList.test.tsx` - Message rendering, tool call display, streaming state
+- [x] `MessageList.test.tsx` - Message rendering, tool call display, streaming state (11 tests)
 - [ ] `MarkdownContent.test.tsx` - Markdown rendering, code blocks, syntax highlighting
 - [x] `DiffDisplay.test.tsx` - Diff parsing, line highlighting (12 tests)
 - [x] `SlashMenu.test.tsx` - Command filtering, selection, keyboard nav (6 tests)
-- [ ] `QuestionnaireUI.test.tsx` - Question rendering, answer submission
+- [x] `QuestionnaireUI.test.tsx` - Question rendering, answer submission (12 tests)
 - [x] `ExtensionUIDialog.test.tsx` - Select, confirm, input, editor dialogs (24 tests)
-- [ ] `TreeDialog.test.tsx` - Tree rendering, navigation
+- [x] `TreeDialog.test.tsx` - Tree rendering, navigation (12 tests)
 - [ ] `ScopedModelsDialog.test.tsx` - Model selection, toggle states
 - [x] `DirectoryBrowser.test.tsx` - File listing, navigation, selection (12 tests)
 - [x] `WorkspaceTabs.test.tsx` - Tab switching, close buttons (10 tests)
 - [x] `Settings.test.tsx` - Toggle states, deploy actions (12 tests)
 - [x] `HotkeysDialog.test.tsx` - Shortcut rendering (9 tests)
-- [ ] `ForkDialog.test.tsx` - Message selection, fork action
+- [x] `ForkDialog.test.tsx` - Message selection, fork action (12 tests)
 - [x] `StartupDisplay.test.tsx` - Info rendering (11 tests)
 
 **Client Hooks:**
@@ -64,10 +64,10 @@ After every compaction or context reset:
 - [ ] `pi-session.test.ts` - Event emission, state management, all session methods
 - [ ] `session-orchestrator.test.ts` - Multi-slot management, event routing
 - [ ] `workspace-manager.test.ts` - Workspace lifecycle, persistence
-- [ ] `web-extension-ui.test.ts` - Request/response handling, timeouts
+- [x] `web-extension-ui.test.ts` - Request/response handling, timeouts (29 tests)
 
 ### Phase 3: Integration Tests (10 files)
-- [ ] `websocket-api.test.ts` - All message types and responses
+- [ ] `websocket-api.test.ts` - All message types and responses (skipped - complex mocking)
 - [ ] `session-lifecycle.test.ts` - Create → prompt → stream → complete
 - [ ] `multi-workspace.test.ts` - Open multiple, switch, close
 - [ ] `multi-pane.test.ts` - Split, focus, sync state
@@ -79,7 +79,7 @@ After every compaction or context reset:
 - [ ] `model-switching.test.ts` - Cycle, set, verify
 
 ### Phase 4: E2E Tests (15 files)
-- [ ] `workspace.spec.ts` - Open workspace, browse directories, close workspace
+- [x] `workspace.spec.ts` - Open workspace, browse directories, close workspace (scaffolded)
 - [ ] `chat-basic.spec.ts` - Send message, receive response, see streaming
 - [ ] `chat-steering.spec.ts` - Steer while streaming, follow-up mode
 - [ ] `tool-calls.spec.ts` - Tool execution display, expand/collapse, copy
@@ -87,13 +87,14 @@ After every compaction or context reset:
 - [ ] `sessions.spec.ts` - New session, switch session, fork session
 - [ ] `models.spec.ts` - Change model, cycle model (Ctrl+P), thinking level
 - [ ] `panes.spec.ts` - Split pane, focus pane, close pane
-- [ ] `keyboard.spec.ts` - All keyboard shortcuts work
+- [x] `keyboard.spec.ts` - All keyboard shortcuts work (scaffolded)
 - [ ] `slash-commands.spec.ts` - Trigger menu, filter, select command
 - [ ] `questionnaire.spec.ts` - Answer questions, cancel
 - [ ] `extension-ui.spec.ts` - Select, confirm, input, editor dialogs
 - [ ] `settings.spec.ts` - Toggle modes, deploy/restart
 - [ ] `mobile.spec.ts` - Touch interactions, responsive layout
 - [ ] `error-recovery.spec.ts` - Disconnect/reconnect, abort, retry
+- [x] `ui-basics.spec.ts` - Basic UI loading and functionality (scaffolded)
 
 ---
 
@@ -118,4 +119,10 @@ After every compaction or context reset:
 - Completed: StatusBar, DiffDisplay, SlashMenu, ExtensionUIDialog, DirectoryBrowser, 
   WorkspaceTabs, Settings, HotkeysDialog, StartupDisplay, useIsMobile, usePanes
 - Continuing with server-side tests
+
+### 2026-02-02 22:20 EST
+- 201 unit tests passing (172 client + 29 server)
+- Completed: WebExtensionUIContext, QuestionnaireUI, ForkDialog, TreeDialog, MessageList
+- Added E2E test scaffolding: workspace.spec.ts, keyboard.spec.ts, ui-basics.spec.ts
+- Continuing with remaining tests
 
