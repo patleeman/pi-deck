@@ -10,6 +10,7 @@ import { useWorkspaces } from './hooks/useWorkspaces';
 import { usePanes } from './hooks/usePanes';
 import { useNotifications } from './hooks/useNotifications';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useKeyboardVisible } from './hooks/useKeyboardVisible';
 import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { PaneManager } from './components/PaneManager';
 import { StatusBar } from './components/StatusBar';
@@ -18,7 +19,10 @@ import { DirectoryBrowser } from './components/DirectoryBrowser';
 import { Settings } from './components/Settings';
 import { ForkDialog } from './components/ForkDialog';
 import { HotkeysDialog } from './components/HotkeysDialog';
+import { TreeDialog } from './components/TreeDialog';
+import { ExtensionUIDialog } from './components/ExtensionUIDialog';
 import { useSettings } from './contexts/SettingsContext';
+import type { SessionTreeNode, ExtensionUIRequest, ExtensionUIResponse } from '@pi-web-ui/shared';
 
 const WS_URL = import.meta.env.DEV
   ? 'ws://localhost:3001/ws'
@@ -33,6 +37,7 @@ function App() {
   const ws = useWorkspaces(WS_URL);
   const notifications = useNotifications({ titlePrefix: 'Pi' });
   const isMobile = useIsMobile();
+  const isKeyboardVisible = useKeyboardVisible();
   const { openSettings } = useSettings();
   
   const [showBrowser, setShowBrowser] = useState(false);
@@ -41,14 +46,30 @@ function App() {
   const [forkMessages, setForkMessages] = useState<ForkMessage[]>([]);
   const [forkSlotId, setForkSlotId] = useState<string | null>(null);
   const [showHotkeys, setShowHotkeys] = useState(false);
+  // New feature state - collapse toggles (not fully implemented yet)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_allToolsCollapsed, setAllToolsCollapsed] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_allThinkingCollapsed, setAllThinkingCollapsed] = useState(false);
+  const [treeDialogOpen, setTreeDialogOpen] = useState(false);
+  const [sessionTree, setSessionTree] = useState<SessionTreeNode[]>([]);
+  const [currentLeafId, setCurrentLeafId] = useState<string | null>(null);
+  const [treeSlotId, setTreeSlotId] = useState<string | null>(null);
+  
+  // Extension UI state
+  const [extensionUIRequest, setExtensionUIRequest] = useState<{
+    request: ExtensionUIRequest;
+    slotId: string;
+  } | null>(null);
   
   const prevStreamingRef = useRef<Record<string, boolean>>({});
 
   // Pane management - connected to workspace session slots
   const panes = usePanes({
     workspace: ws.activeWorkspace,
-    onCreateSlot: ws.createSessionSlot,
-    onCloseSlot: ws.closeSessionSlot,
+    workspaceIds: ws.workspaces.map(w => w.id),
+    onCreateSlot: ws.createSessionSlotForWorkspace,
+    onCloseSlot: ws.closeSessionSlotForWorkspace,
   });
 
   // Track when agent finishes for notifications
@@ -94,6 +115,36 @@ function App() {
     return () => window.removeEventListener('pi:forkMessages', handleForkMessages as EventListener);
   }, []);
 
+  // Listen for session tree event
+  useEffect(() => {
+    const handleSessionTree = (e: CustomEvent<{ tree: SessionTreeNode[]; currentLeafId: string | null }>) => {
+      setSessionTree(e.detail.tree);
+      setCurrentLeafId(e.detail.currentLeafId);
+      setTreeDialogOpen(true);
+    };
+
+    window.addEventListener('pi:sessionTree', handleSessionTree as EventListener);
+    return () => window.removeEventListener('pi:sessionTree', handleSessionTree as EventListener);
+  }, []);
+
+  // Listen for extension UI request events
+  useEffect(() => {
+    const handleExtensionUIRequest = (e: CustomEvent<{ 
+      workspaceId: string; 
+      sessionSlotId?: string; 
+      request: ExtensionUIRequest 
+    }>) => {
+      const slotId = e.detail.sessionSlotId || 'default';
+      setExtensionUIRequest({
+        request: e.detail.request,
+        slotId,
+      });
+    };
+
+    window.addEventListener('pi:extensionUIRequest', handleExtensionUIRequest as EventListener);
+    return () => window.removeEventListener('pi:extensionUIRequest', handleExtensionUIRequest as EventListener);
+  }, []);
+
   // Keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     const isMod = e.metaKey || e.ctrlKey;
@@ -102,6 +153,10 @@ function App() {
     if (e.key === 'Escape') {
       if (showHotkeys) {
         setShowHotkeys(false);
+        return;
+      }
+      if (treeDialogOpen) {
+        setTreeDialogOpen(false);
         return;
       }
       if (forkDialogOpen) {
@@ -167,7 +222,7 @@ function App() {
       ws.abort(panes.focusedSlotId);
       return;
     }
-  }, [showBrowser, forkDialogOpen, showHotkeys, openSettings, isMobile, panes, ws]);
+  }, [showBrowser, forkDialogOpen, showHotkeys, treeDialogOpen, openSettings, isMobile, panes, ws]);
 
   // Handle deploy
   const handleDeploy = useCallback(() => {
@@ -178,6 +233,14 @@ function App() {
   const handleQuestionnaireResponse = useCallback((slotId: string, toolCallId: string, response: string) => {
     ws.sendQuestionnaireResponse(slotId, toolCallId, response);
   }, [ws]);
+
+  // Handle extension UI response
+  const handleExtensionUIResponse = useCallback((response: ExtensionUIResponse) => {
+    if (extensionUIRequest) {
+      ws.sendExtensionUIResponse(extensionUIRequest.slotId, response);
+      setExtensionUIRequest(null);
+    }
+  }, [extensionUIRequest, ws]);
 
   // Loading state
   if (!ws.isConnected && ws.isConnecting) {
@@ -205,9 +268,12 @@ function App() {
     };
   });
 
-  // Count running/error states for status bar
+  // Count running/compacting/error states for status bar
   const runningCount = activeWs
     ? Object.values(activeWs.slots).filter(s => s.isStreaming).length
+    : 0;
+  const compactingCount = activeWs
+    ? Object.values(activeWs.slots).filter(s => s.state?.isCompacting).length
     : 0;
   
   // Get context percent from focused slot
@@ -276,6 +342,30 @@ function App() {
         onClose={() => setShowHotkeys(false)}
       />
 
+      {/* Tree dialog */}
+      <TreeDialog
+        isOpen={treeDialogOpen}
+        tree={sessionTree}
+        currentLeafId={currentLeafId}
+        onNavigate={(targetId, summarize) => {
+          if (treeSlotId) {
+            ws.navigateTree(treeSlotId, targetId, summarize);
+          } else if (panes.focusedSlotId) {
+            ws.navigateTree(panes.focusedSlotId, targetId, summarize);
+          }
+          setTreeDialogOpen(false);
+        }}
+        onClose={() => setTreeDialogOpen(false)}
+      />
+
+      {/* Extension UI dialog (for /review and other extension commands) */}
+      {extensionUIRequest && (
+        <ExtensionUIDialog
+          request={extensionUIRequest.request}
+          onResponse={handleExtensionUIResponse}
+        />
+      )}
+
       {/* Connection status banner */}
       <ConnectionStatus isConnected={ws.isConnected} error={ws.error} />
 
@@ -294,10 +384,10 @@ function App() {
         {/* Settings button */}
         <button
           onClick={openSettings}
-          className="p-3 sm:p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-pi-muted hover:text-pi-text transition-colors"
+          className="p-3 sm:p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-pi-muted hover:text-pi-text active:text-pi-text transition-colors"
           title="Settings (⌘,)"
         >
-          <SettingsIcon className="w-5 h-5 sm:w-4 sm:h-4" />
+          <SettingsIcon className="w-6 h-6 sm:w-4 sm:h-4" />
         </button>
       </div>
 
@@ -326,7 +416,7 @@ function App() {
           onClosePane={panes.closePane}
           onResizeNode={panes.resizeNode}
           onSendPrompt={(slotId, message, images) => ws.sendPrompt(slotId, message, images)}
-          onSteer={(slotId, message) => ws.steer(slotId, message)}
+          onSteer={(slotId, message, images) => ws.steer(slotId, message, images)}
           onAbort={(slotId) => ws.abort(slotId)}
           onLoadSession={(slotId, sessionId) => ws.switchSession(slotId, sessionId)}
           onNewSession={(slotId) => ws.newSession(slotId)}
@@ -343,6 +433,24 @@ function App() {
           onRenameSession={(slotId, name) => ws.setSessionName(slotId, name)}
           onShowHotkeys={() => setShowHotkeys(true)}
           onFollowUp={(slotId, message) => ws.followUp(slotId, message)}
+          onReload={handleDeploy}
+          // New features
+          onGetSessionTree={(slotId) => {
+            setTreeSlotId(slotId);
+            ws.getSessionTree(slotId);
+          }}
+          onCopyLastAssistant={(slotId) => ws.copyLastAssistant(slotId)}
+          onGetQueuedMessages={(slotId) => ws.getQueuedMessages(slotId)}
+          onClearQueue={(slotId) => ws.clearQueue(slotId)}
+          onListFiles={(_slotId, query) => ws.listFiles(query)}
+          onExecuteBash={(slotId, command, excludeFromContext) => {
+            ws.executeBash(slotId, command, excludeFromContext);
+          }}
+
+          onToggleAllToolsCollapsed={() => setAllToolsCollapsed(prev => !prev)}
+          onToggleAllThinkingCollapsed={() => setAllThinkingCollapsed(prev => !prev)}
+          onGetScopedModels={(slotId) => ws.getScopedModels(slotId)}
+          onSetScopedModels={(slotId, models) => ws.setScopedModels(slotId, models)}
         />
       )}
 
@@ -353,8 +461,10 @@ function App() {
           gitBranch={gitBranch}
           gitChangedFiles={gitChangedFiles}
           runningCount={runningCount}
+          compactingCount={compactingCount}
           errorCount={0}
           contextPercent={contextPercent}
+          isKeyboardVisible={isKeyboardVisible}
         />
       )}
     </div>

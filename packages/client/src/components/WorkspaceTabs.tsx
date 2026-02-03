@@ -26,7 +26,7 @@ export function WorkspaceTabs({
   onOpenBrowser,
 }: WorkspaceTabsProps) {
   return (
-    <div className="flex items-center h-10 px-[14px] border-b border-pi-border">
+    <div className="flex items-center h-12 sm:h-10 px-2 sm:px-[14px] border-b border-pi-border overflow-x-auto">
       {/* Workspace tabs */}
       {tabs.map((tab) => {
         const isActive = tab.id === activeId;
@@ -34,14 +34,14 @@ export function WorkspaceTabs({
           <button
             key={tab.id}
             onClick={() => onSelect(tab.id)}
-            className={`group flex items-center border-b-2 -mb-[1px] ${
+            className={`group flex items-center border-b-2 -mb-[1px] min-w-0 flex-shrink-0 ${
               isActive
                 ? 'border-pi-border-focus text-pi-text'
                 : 'border-transparent text-pi-muted hover:text-pi-text active:text-pi-text'
             }`}
             title={tab.path}
           >
-            <span className="pl-[14px] pr-1 py-2 font-mono text-[14px] flex items-center gap-2">
+            <span className="px-3 sm:pl-[14px] sm:pr-1 py-3 sm:py-2 font-mono text-[15px] sm:text-[14px] flex items-center gap-2">
               {tab.name}
               
               {/* Activity indicator */}
@@ -65,7 +65,7 @@ export function WorkspaceTabs({
               }`}
               title="Close workspace"
             >
-              <X className="w-4 h-4 sm:w-3 sm:h-3" />
+              <X className="w-5 h-5 sm:w-3 sm:h-3" />
             </span>
           </button>
         );
@@ -74,7 +74,7 @@ export function WorkspaceTabs({
       {/* Add workspace button */}
       <button
         onClick={onOpenBrowser}
-        className="px-3 py-2 sm:px-2 text-pi-muted hover:text-pi-text transition-colors text-[18px] sm:text-[14px] ml-1"
+        className="px-4 py-3 sm:px-2 sm:py-2 text-pi-muted hover:text-pi-text transition-colors text-[20px] sm:text-[14px] ml-1 flex-shrink-0"
         title="Open directory (⌘O)"
       >
         +

@@ -14,6 +14,10 @@ const HOTKEYS = [
     { key: 'Ctrl+U', desc: 'Delete to line start' },
     { key: 'Ctrl+K', desc: 'Delete to line end' },
     { key: 'Alt+Enter', desc: 'Queue follow-up message' },
+    { key: 'Alt+Up', desc: 'Retrieve queued messages' },
+    { key: '@', desc: 'Reference file' },
+    { key: '!cmd', desc: 'Run bash & send to LLM' },
+    { key: '!!cmd', desc: 'Run bash (no LLM)' },
   ]},
   { category: 'Models & Thinking', keys: [
     { key: 'Ctrl+L', desc: 'Open model selector' },
@@ -21,8 +25,14 @@ const HOTKEYS = [
     { key: 'Shift+Ctrl+P', desc: 'Previous model' },
     { key: 'Shift+Tab', desc: 'Cycle thinking level' },
   ]},
+  { category: 'Display', keys: [
+    { key: 'Ctrl+O', desc: 'Collapse/expand all tools' },
+    { key: 'Ctrl+T', desc: 'Collapse/expand all thinking' },
+  ]},
   { category: 'Session', keys: [
     { key: 'Ctrl+.', desc: 'Abort agent' },
+    { key: '/tree', desc: 'Session tree navigation' },
+    { key: '/copy', desc: 'Copy last response' },
   ]},
   { category: 'Panes', keys: [
     { key: 'Ctrl+\\', desc: 'Split vertical' },
@@ -31,9 +41,8 @@ const HOTKEYS = [
     { key: 'Ctrl+1-4', desc: 'Switch workspace' },
   ]},
   { category: 'Navigation', keys: [
-    { key: 'Ctrl+O', desc: 'Open directory' },
-    { key: 'Ctrl+,', desc: 'Settings' },
     { key: '/', desc: 'Slash commands' },
+    { key: 'Ctrl+,', desc: 'Settings' },
   ]},
 ];
 

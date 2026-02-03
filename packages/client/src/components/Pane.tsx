@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import type { SessionInfo, ImageAttachment, SlashCommand as BackendSlashCommand, ModelInfo, ThinkingLevel, StartupInfo } from '@pi-web-ui/shared';
+import type { SessionInfo, ImageAttachment, SlashCommand as BackendSlashCommand, ModelInfo, ThinkingLevel, StartupInfo, ScopedModelInfo } from '@pi-web-ui/shared';
 import type { PaneData } from '../hooks/usePanes';
 import { MessageList } from './MessageList';
 import { SlashMenu, SlashCommand } from './SlashMenu';
 import { QuestionnaireUI } from './QuestionnaireUI';
 import { StartupDisplay } from './StartupDisplay';
-import { X, ChevronDown, Send, Square, ImagePlus, Zap, Clock } from 'lucide-react';
+import { ScopedModelsDialog } from './ScopedModelsDialog';
+import { X, ChevronDown, Send, Square, ImagePlus, Command } from 'lucide-react';
 
 interface PaneProps {
   pane: PaneData;
@@ -18,7 +19,7 @@ interface PaneProps {
   onFocus: () => void;
   onClose: () => void;
   onSendPrompt: (message: string, images?: ImageAttachment[]) => void;
-  onSteer: (message: string) => void;
+  onSteer: (message: string, images?: ImageAttachment[]) => void;
   onAbort: () => void;
   onLoadSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -33,6 +34,19 @@ interface PaneProps {
   onRenameSession: (name: string) => void;
   onShowHotkeys: () => void;
   onFollowUp: (message: string) => void;
+  onReload: () => void;
+  // New features
+  onGetSessionTree: () => void;
+  onCopyLastAssistant: () => void;
+  onGetQueuedMessages: () => void;
+  onClearQueue: () => void;
+  onListFiles: (query?: string) => void;
+  onExecuteBash: (command: string, excludeFromContext?: boolean) => void;
+  onToggleAllToolsCollapsed: () => void;
+  onToggleAllThinkingCollapsed: () => void;
+  // Scoped models
+  onGetScopedModels: () => void;
+  onSetScopedModels: (models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>) => void;
 }
 
 // Built-in pane commands (UI-only)
@@ -47,6 +61,11 @@ const PANE_COMMANDS: SlashCommand[] = [
   { cmd: '/export', desc: 'Export session to HTML', action: 'export' },
   { cmd: '/name', desc: 'Rename session', action: 'name' },
   { cmd: '/hotkeys', desc: 'Show keyboard shortcuts', action: 'hotkeys' },
+  { cmd: '/reload', desc: 'Rebuild and restart the application', action: 'reload' },
+  // New commands
+  { cmd: '/tree', desc: 'Navigate session tree', action: 'tree' },
+  { cmd: '/copy', desc: 'Copy last assistant response', action: 'copy' },
+  { cmd: '/scoped-models', desc: 'Configure models for Ctrl+P cycling', action: 'scoped-models' },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -107,6 +126,18 @@ export function Pane({
   onRenameSession,
   onShowHotkeys,
   onFollowUp,
+  onReload,
+  // New features
+  onGetSessionTree,
+  onCopyLastAssistant,
+  onGetQueuedMessages,
+  onClearQueue,
+  onListFiles,
+  onExecuteBash,
+  onToggleAllToolsCollapsed,
+  onToggleAllThinkingCollapsed,
+  onGetScopedModels,
+  onSetScopedModels,
 }: PaneProps) {
   const [inputValue, setInputValue] = useState('');
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -119,12 +150,24 @@ export function Pane({
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
   // 'steer' = immediate interrupt, 'followUp' = queue after current response
   const [streamingInputMode, setStreamingInputMode] = useState<'steer' | 'followUp'>('steer');
+  // New feature state
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_fileFilter, setFileFilter] = useState(''); // Used to track filter for potential future client-side filtering
+  const [fileList, setFileList] = useState<Array<{ path: string; name: string }>>([]);
+  const [queuedSteering, setQueuedSteering] = useState<string[]>([]);
+  const [queuedFollowUp, setQueuedFollowUp] = useState<string[]>([]);
+  const [showScopedModels, setShowScopedModels] = useState(false);
+  const [scopedModels, setScopedModels] = useState<ScopedModelInfo[]>([]);
+  // Track if Alt key is held to show follow-up mode
+  const [altHeld, setAltHeld] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userScrolledUpRef = useRef(false);
+  const isProgrammaticScrollRef = useRef(false);
 
   // Get slot data
   const slot = pane.slot;
@@ -135,6 +178,24 @@ export function Pane({
   const state = slot?.state;
   const activeToolExecutions = slot?.activeToolExecutions || [];
   const questionnaireRequest = state?.questionnaireRequest;
+  const bashExecution = slot?.bashExecution;
+
+  // Track session ID to reset scroll when workspace/session changes
+  const sessionId = state?.sessionId;
+  const prevSessionIdRef = useRef<string | null | undefined>(undefined);
+
+  // Reset scroll position when session changes (workspace tab switch or session switch)
+  useEffect(() => {
+    if (prevSessionIdRef.current !== undefined && prevSessionIdRef.current !== sessionId) {
+      // Session changed - reset scroll to top
+      const container = messagesContainerRef.current;
+      if (container) {
+        container.scrollTop = 0;
+      }
+      userScrolledUpRef.current = false;
+    }
+    prevSessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   // Get current model and thinking level
   const currentModel = state?.model;
@@ -227,35 +288,66 @@ export function Pane({
 
   // Track when user scrolls away from bottom
   const handleMessagesScroll = useCallback(() => {
+    // Ignore scroll events triggered by programmatic scrolling
+    if (isProgrammaticScrollRef.current) return;
+    
     const container = messagesContainerRef.current;
     if (!container) return;
     
-    // Check if scrolled to bottom (with 50px tolerance)
-    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+    // Check if scrolled to bottom (with 100px tolerance for reliability)
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     userScrolledUpRef.current = !isAtBottom;
   }, []);
 
-  // Scroll to bottom when new messages arrive (only if not scrolled up)
+  // Scroll to bottom helper - uses scrollIntoView on end marker for reliability
+  const scrollToBottom = useCallback((smooth = true) => {
+    isProgrammaticScrollRef.current = true;
+    requestAnimationFrame(() => {
+      const endMarker = messagesEndRef.current;
+      if (endMarker) {
+        endMarker.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant', block: 'end' });
+      }
+      // Reset flag after a short delay to allow scroll to complete
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, smooth ? 300 : 50);
+    });
+  }, []);
+
+  // Scroll to bottom when new messages arrive
   useEffect(() => {
-    // Always scroll when new messages are added (user sent message)
     if (!userScrolledUpRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      scrollToBottom();
     }
-  }, [messages.length]);
+  }, [messages.length, scrollToBottom]);
 
-  // Scroll during streaming only if user hasn't scrolled up
-  useEffect(() => {
-    if (isStreaming && streamingText && !userScrolledUpRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [isStreaming, streamingText]);
+  // Track total tool result content to detect updates (not just count)
+  const toolResultsFingerprint = useMemo(() => {
+    return activeToolExecutions.map(t => `${t.toolCallId}:${t.status}:${(t.result?.length || 0)}`).join('|');
+  }, [activeToolExecutions]);
 
-  // Reset scroll tracking when streaming stops
+  // Track last message content length to detect in-place updates
+  const lastMessageFingerprint = useMemo(() => {
+    if (messages.length === 0) return '';
+    const lastMsg = messages[messages.length - 1];
+    // Track content length as a simple fingerprint for changes
+    return `${lastMsg.id}:${JSON.stringify(lastMsg.content).length}`;
+  }, [messages]);
+
+  // Scroll during streaming (text, thinking, or tool output changes)
   useEffect(() => {
-    if (!isStreaming) {
-      userScrolledUpRef.current = false;
+    if (isStreaming && !userScrolledUpRef.current) {
+      // Use instant scroll during rapid streaming updates
+      scrollToBottom(false);
     }
-  }, [isStreaming]);
+  }, [isStreaming, streamingText, streamingThinking, toolResultsFingerprint, lastMessageFingerprint, scrollToBottom]);
+
+  // Scroll when bash execution output changes
+  useEffect(() => {
+    if (bashExecution && !userScrolledUpRef.current) {
+      scrollToBottom(false);
+    }
+  }, [bashExecution?.output, bashExecution?.isRunning, scrollToBottom]);
 
   // Focus input when pane becomes focused
   useEffect(() => {
@@ -274,6 +366,85 @@ export function Pane({
       inputRef.current.style.height = 'auto';
     }
   }, [inputValue]);
+
+  // Listen for file list events (@ reference)
+  useEffect(() => {
+    const handleFileList = (e: CustomEvent<{ files: Array<{ path: string; name: string }> }>) => {
+      setFileList(e.detail.files);
+    };
+    window.addEventListener('pi:fileList', handleFileList as EventListener);
+    return () => window.removeEventListener('pi:fileList', handleFileList as EventListener);
+  }, []);
+
+  // Listen for queued messages events (filtered by this pane's slotId)
+  useEffect(() => {
+    const handleQueuedMessages = (e: CustomEvent<{ sessionSlotId: string; steering: string[]; followUp: string[] }>) => {
+      console.log(`[Pane.queuedMessages] Received event - eventSlotId: ${e.detail.sessionSlotId}, mySlotId: ${pane.sessionSlotId}, match: ${e.detail.sessionSlotId === pane.sessionSlotId}`);
+      console.log(`[Pane.queuedMessages] steering: ${JSON.stringify(e.detail.steering)}, followUp: ${JSON.stringify(e.detail.followUp)}`);
+      // Only update if this event is for this pane's slot
+      if (e.detail.sessionSlotId === pane.sessionSlotId) {
+        console.log(`[Pane.queuedMessages] Updating state for this pane`);
+        setQueuedSteering(e.detail.steering);
+        setQueuedFollowUp(e.detail.followUp);
+      }
+    };
+    window.addEventListener('pi:queuedMessages', handleQueuedMessages as EventListener);
+    return () => window.removeEventListener('pi:queuedMessages', handleQueuedMessages as EventListener);
+  }, [pane.sessionSlotId]);
+
+  // Listen for copy result (filtered by this pane's slotId)
+  useEffect(() => {
+    const handleCopyResult = (e: CustomEvent<{ sessionSlotId: string; success: boolean; text?: string; error?: string }>) => {
+      // Only handle if this event is for this pane's slot
+      if (e.detail.sessionSlotId !== pane.sessionSlotId) return;
+      
+      if (e.detail.success && e.detail.text) {
+        navigator.clipboard.writeText(e.detail.text).then(() => {
+          // Could show a toast notification here
+          console.log('Copied to clipboard');
+        });
+      } else if (e.detail.error) {
+        console.error('Copy failed:', e.detail.error);
+      }
+    };
+    window.addEventListener('pi:copyResult', handleCopyResult as EventListener);
+    return () => window.removeEventListener('pi:copyResult', handleCopyResult as EventListener);
+  }, [pane.sessionSlotId]);
+
+  // Listen for scoped models response (filtered by this pane's slotId)
+  useEffect(() => {
+    const handleScopedModels = (e: CustomEvent<{ sessionSlotId: string; models: ScopedModelInfo[] }>) => {
+      // Only handle if this event is for this pane's slot
+      if (e.detail.sessionSlotId !== pane.sessionSlotId) return;
+      
+      setScopedModels(e.detail.models);
+      setShowScopedModels(true);
+    };
+    window.addEventListener('pi:scopedModels', handleScopedModels as EventListener);
+    return () => window.removeEventListener('pi:scopedModels', handleScopedModels as EventListener);
+  }, [pane.sessionSlotId]);
+
+  // Track Alt key to toggle between steer and follow-up modes
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' && isStreaming) {
+        setAltHeld(true);
+        setStreamingInputMode('followUp');
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        setAltHeld(false);
+        setStreamingInputMode('steer');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [isStreaming]);
 
   // Handle image drop
   const handleDrop = useCallback(async (e: React.DragEvent) => {
@@ -369,23 +540,36 @@ export function Pane({
   const handleSend = useCallback(() => {
     if (!inputValue.trim() && attachedImages.length === 0) return;
     
+    // Reset scroll tracking - user sent a message, so resume auto-scroll
+    userScrolledUpRef.current = false;
+    
+    // Determine the effective mode - if Alt is held, use followUp
+    const effectiveMode = altHeld ? 'followUp' : streamingInputMode;
+    
+    console.log(`[Pane.handleSend] isStreaming: ${isStreaming}, effectiveMode: ${effectiveMode}, streamingInputMode: ${streamingInputMode}, altHeld: ${altHeld}`);
+    console.log(`[Pane.handleSend] message: "${inputValue.trim().substring(0, 50)}"`);
+    
     if (isStreaming) {
-      if (streamingInputMode === 'steer') {
-        onSteer(inputValue.trim());
+      if (effectiveMode === 'steer') {
+        console.log(`[Pane.handleSend] Calling onSteer`);
+        onSteer(inputValue.trim(), attachedImages.length > 0 ? attachedImages : undefined);
       } else {
+        console.log(`[Pane.handleSend] Calling onFollowUp`);
         onFollowUp(inputValue.trim());
       }
     } else {
+      console.log(`[Pane.handleSend] Calling onSendPrompt (not streaming)`);
       onSendPrompt(inputValue.trim(), attachedImages.length > 0 ? attachedImages : undefined);
-      imagePreviews.forEach(url => URL.revokeObjectURL(url));
-      setAttachedImages([]);
-      setImagePreviews([]);
     }
+    // Clear images after sending
+    imagePreviews.forEach(url => URL.revokeObjectURL(url));
+    setAttachedImages([]);
+    setImagePreviews([]);
     setInputValue('');
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
-  }, [inputValue, attachedImages, imagePreviews, isStreaming, streamingInputMode, onSteer, onFollowUp, onSendPrompt]);
+  }, [inputValue, attachedImages, imagePreviews, isStreaming, streamingInputMode, altHeld, onSteer, onFollowUp, onSendPrompt]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -396,9 +580,24 @@ export function Pane({
       setSlashFilter(val);
       setSelectedCmdIdx(0);
       setShowResumeMenu(false);
+      setShowFileMenu(false);
+    } else if (val.includes('@')) {
+      // Check if we should show file menu (@ at start or after whitespace)
+      const lastAtIndex = val.lastIndexOf('@');
+      const charBefore = lastAtIndex > 0 ? val[lastAtIndex - 1] : ' ';
+      if (charBefore === ' ' || charBefore === '\n' || lastAtIndex === 0) {
+        setShowSlashMenu(false);
+        setShowResumeMenu(false);
+        setShowFileMenu(true);
+        setFileFilter(val.slice(lastAtIndex + 1));
+        setSelectedCmdIdx(0);
+        // Request file list from server
+        onListFiles(val.slice(lastAtIndex + 1));
+      }
     } else {
       setShowSlashMenu(false);
       setShowResumeMenu(false);
+      setShowFileMenu(false);
     }
   };
 
@@ -447,6 +646,9 @@ export function Pane({
       case 'hotkeys':
         onShowHotkeys();
         break;
+      case 'reload':
+        onReload();
+        break;
       case 'resume':
         setShowSlashMenu(false);
         setShowResumeMenu(true);
@@ -454,6 +656,16 @@ export function Pane({
         setSelectedCmdIdx(0); // Reset selection
         setInputValue('');
         return; // Don't clear input yet
+      // New commands
+      case 'tree':
+        onGetSessionTree();
+        break;
+      case 'copy':
+        onCopyLastAssistant();
+        break;
+      case 'scoped-models':
+        onGetScopedModels();
+        break;
       default:
         // Backend command
         if (action.startsWith('backend:')) {
@@ -589,32 +801,94 @@ export function Pane({
       return;
     }
 
-    // Ctrl+P - Cycle to next model
+    // Tab - Path completion (when not in a menu and typing a path)
+    if (key === 'Tab' && !e.shiftKey && !showSlashMenu && !showResumeMenu && !showFileMenu && !showModelMenu && !showThinkingMenu) {
+      // Check if we're in a path context (after @ or typing a path-like string)
+      const input = e.target as HTMLTextAreaElement;
+      const cursorPos = input.selectionStart || 0;
+      const textBeforeCursor = inputValue.slice(0, cursorPos);
+      
+      // Find the start of the current word/path
+      const lastSpaceOrNewline = Math.max(textBeforeCursor.lastIndexOf(' '), textBeforeCursor.lastIndexOf('\n'));
+      const wordStart = lastSpaceOrNewline + 1;
+      const currentWord = textBeforeCursor.slice(wordStart);
+      
+      // Check if it looks like a path (starts with @, ., /, or ~) or contains /
+      if (currentWord && (currentWord.startsWith('@') || currentWord.startsWith('.') || currentWord.startsWith('/') || currentWord.startsWith('~') || currentWord.includes('/'))) {
+        e.preventDefault();
+        // Request file completion
+        const query = currentWord.startsWith('@') ? currentWord.slice(1) : currentWord;
+        onListFiles(query);
+        setShowFileMenu(true);
+        setFileFilter(query);
+        setSelectedCmdIdx(0);
+        return;
+      }
+    }
+
+    // Ctrl+P - Cycle to next model (use scoped models if configured)
     if (key === 'p' && e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
-      if (models.length > 0 && currentModel) {
-        const currentIdx = models.findIndex(m => m.id === currentModel.id && m.provider === currentModel.provider);
-        const nextIdx = (currentIdx + 1) % models.length;
-        const nextModel = models[nextIdx];
+      // Use scoped models if any are enabled, otherwise use all models
+      const enabledScoped = scopedModels.filter(m => m.enabled);
+      const cycleModels = enabledScoped.length > 0 
+        ? enabledScoped.map(sm => ({ provider: sm.provider, id: sm.modelId, thinkingLevel: sm.thinkingLevel }))
+        : models.map(m => ({ provider: m.provider, id: m.id }));
+      
+      if (cycleModels.length > 0 && currentModel) {
+        const currentIdx = cycleModels.findIndex(m => m.id === currentModel.id && m.provider === currentModel.provider);
+        const nextIdx = (currentIdx + 1) % cycleModels.length;
+        const nextModel = cycleModels[nextIdx];
         onSetModel(nextModel.provider, nextModel.id);
+        // Also set thinking level if scoped model has one
+        if ('thinkingLevel' in nextModel && nextModel.thinkingLevel) {
+          onSetThinkingLevel(nextModel.thinkingLevel as ThinkingLevel);
+        }
       }
       return;
     }
 
-    // Shift+Ctrl+P - Cycle to previous model
+    // Shift+Ctrl+P - Cycle to previous model (use scoped models if configured)
     if (key === 'p' && e.ctrlKey && e.shiftKey && !e.metaKey) {
       e.preventDefault();
-      if (models.length > 0 && currentModel) {
-        const currentIdx = models.findIndex(m => m.id === currentModel.id && m.provider === currentModel.provider);
-        const prevIdx = (currentIdx - 1 + models.length) % models.length;
-        const prevModel = models[prevIdx];
+      const enabledScoped = scopedModels.filter(m => m.enabled);
+      const cycleModels = enabledScoped.length > 0 
+        ? enabledScoped.map(sm => ({ provider: sm.provider, id: sm.modelId, thinkingLevel: sm.thinkingLevel }))
+        : models.map(m => ({ provider: m.provider, id: m.id }));
+      
+      if (cycleModels.length > 0 && currentModel) {
+        const currentIdx = cycleModels.findIndex(m => m.id === currentModel.id && m.provider === currentModel.provider);
+        const prevIdx = (currentIdx - 1 + cycleModels.length) % cycleModels.length;
+        const prevModel = cycleModels[prevIdx];
         onSetModel(prevModel.provider, prevModel.id);
+        if ('thinkingLevel' in prevModel && prevModel.thinkingLevel) {
+          onSetThinkingLevel(prevModel.thinkingLevel as ThinkingLevel);
+        }
       }
       return;
     }
 
-    // Ctrl+O - Toggle tool output expansion (handled at App level)
-    // Ctrl+T - Toggle thinking blocks (handled at App level)
+    // Ctrl+O - Toggle all tools collapsed
+    if (key === 'o' && e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      onToggleAllToolsCollapsed();
+      return;
+    }
+
+    // Ctrl+T - Toggle all thinking collapsed
+    if (key === 't' && e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      onToggleAllThinkingCollapsed();
+      return;
+    }
+
+    // Alt+Up - Retrieve queued messages
+    if (key === 'ArrowUp' && e.altKey) {
+      e.preventDefault();
+      // Request queued messages then clear them
+      onGetQueuedMessages();
+      return;
+    }
 
     // Alt+Enter - Queue follow-up message
     if (key === 'Enter' && e.altKey && inputValue.trim()) {
@@ -624,22 +898,81 @@ export function Pane({
       return;
     }
 
-    // Send message
+    // File menu navigation
+    if (showFileMenu && fileList.length > 0) {
+      if (key === 'ArrowDown' || key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedCmdIdx(i => (i + 1) % fileList.length);
+        return;
+      }
+      if (key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedCmdIdx(i => (i - 1 + fileList.length) % fileList.length);
+        return;
+      }
+      if (key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        // Replace the @query with the file path
+        const lastAtIndex = inputValue.lastIndexOf('@');
+        const newValue = inputValue.slice(0, lastAtIndex) + '@' + fileList[selectedCmdIdx].path + ' ';
+        setInputValue(newValue);
+        setShowFileMenu(false);
+        setFileList([]);
+        return;
+      }
+      if (key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowFileMenu(false);
+        return;
+      }
+    }
+
+    // Send message - check for !command and !!command
     if (key === 'Enter' && !e.shiftKey && !e.altKey && (inputValue.trim() || attachedImages.length > 0)) {
       e.preventDefault();
+      const trimmed = inputValue.trim();
+      
+      // Check for !!command (bash without sending to LLM)
+      if (trimmed.startsWith('!!')) {
+        const command = trimmed.slice(2).trim();
+        if (command) {
+          onExecuteBash(command, true); // excludeFromContext = true
+        }
+        setInputValue('');
+        return;
+      }
+      
+      // Check for !command (bash and send to LLM)
+      if (trimmed.startsWith('!') && !trimmed.startsWith('!!')) {
+        const command = trimmed.slice(1).trim();
+        if (command) {
+          onExecuteBash(command, false); // excludeFromContext = false
+        }
+        setInputValue('');
+        return;
+      }
+      
+      // Reset scroll tracking - user sent a message, so resume auto-scroll
+      userScrolledUpRef.current = false;
+      
       if (isStreaming) {
         // Use current streaming mode
         if (streamingInputMode === 'steer') {
-          onSteer(inputValue.trim());
+          onSteer(trimmed, attachedImages.length > 0 ? attachedImages : undefined);
         } else {
-          onFollowUp(inputValue.trim());
+          onFollowUp(trimmed);
         }
       } else {
-        onSendPrompt(inputValue.trim(), attachedImages.length > 0 ? attachedImages : undefined);
-        imagePreviews.forEach(url => URL.revokeObjectURL(url));
-        setAttachedImages([]);
-        setImagePreviews([]);
+        onSendPrompt(trimmed, attachedImages.length > 0 ? attachedImages : undefined);
       }
+      // Clear images after sending
+      imagePreviews.forEach(url => URL.revokeObjectURL(url));
+      setAttachedImages([]);
+      setImagePreviews([]);
       setInputValue('');
     }
   };
@@ -787,31 +1120,50 @@ export function Pane({
       <div 
         ref={messagesContainerRef}
         onScroll={handleMessagesScroll}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-5"
+        className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-5 relative"
       >
-        {!hasSession && messages.length === 0 ? (
-          <div className="flex-1 overflow-y-auto">
-            {startupInfo ? (
-              <StartupDisplay startupInfo={startupInfo} />
-            ) : (
-              <div className="flex items-center justify-center h-full text-pi-muted text-[14px]">
-                Type a message or /new to start
+        {/* Startup overlay - shown when no messages and user hasn't started typing */}
+        {messages.length === 0 && !inputValue.trim() && startupInfo && (
+          <div className="absolute inset-0 p-3 bg-pi-surface z-10 transition-opacity duration-200">
+            <StartupDisplay startupInfo={startupInfo} />
+          </div>
+        )}
+        
+        <MessageList
+          keyPrefix={pane.id}
+          messages={messages}
+          streamingText={streamingText}
+          streamingThinking={streamingThinking}
+          isStreaming={isStreaming}
+          activeToolExecutions={activeToolExecutions}
+        />
+        {/* Bash execution display (! and !! commands) */}
+        {bashExecution && (
+          <div className="font-mono text-[13px] -mx-3 bg-pi-surface border-l-2 border-pi-warning">
+            <div className="px-4 py-2 flex items-start gap-2">
+              <span className="text-pi-warning font-semibold flex-shrink-0">$</span>
+              <span className="text-pi-text whitespace-pre-wrap break-all flex-1">{bashExecution.command}</span>
+              {bashExecution.isRunning && (
+                <span className="text-pi-warning text-[11px] flex-shrink-0 animate-pulse">(running)</span>
+              )}
+              {bashExecution.excludeFromContext && !bashExecution.isRunning && (
+                <span className="text-pi-muted text-[11px] flex-shrink-0">(not sent to LLM)</span>
+              )}
+            </div>
+            {bashExecution.output && (
+              <div className={`px-4 pb-3 text-[12px] whitespace-pre-wrap break-all ${bashExecution.isError ? 'text-pi-error' : 'text-pi-muted'}`}>
+                {bashExecution.output}
+                {bashExecution.isRunning && <span className="text-pi-warning animate-pulse">▌</span>}
+              </div>
+            )}
+            {!bashExecution.isRunning && bashExecution.exitCode !== undefined && bashExecution.exitCode !== 0 && (
+              <div className="px-4 pb-2 text-[11px] text-pi-error">
+                exit code: {bashExecution.exitCode}
               </div>
             )}
           </div>
-        ) : (
-          <>
-            <MessageList
-              keyPrefix={pane.id}
-              messages={messages}
-              streamingText={streamingText}
-              streamingThinking={streamingThinking}
-              isStreaming={isStreaming}
-              activeToolExecutions={activeToolExecutions}
-            />
-            <div ref={messagesEndRef} />
-          </>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Questionnaire UI */}
@@ -854,11 +1206,78 @@ export function Pane({
               onSelect={(cmd) => executeCommand(cmd.action)}
             />
           )}
+
+          {/* File reference menu (@ trigger) */}
+          {showFileMenu && fileList.length > 0 && (
+            <div className="absolute bottom-full left-3 right-3 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50">
+              {fileList.map((file, i) => (
+                <button
+                  key={file.path}
+                  onClick={() => {
+                    const lastAtIndex = inputValue.lastIndexOf('@');
+                    const newValue = inputValue.slice(0, lastAtIndex) + '@' + file.path + ' ';
+                    setInputValue(newValue);
+                    setShowFileMenu(false);
+                    setFileList([]);
+                  }}
+                  className={`w-full px-3 py-1.5 text-left text-[13px] hover:bg-pi-surface transition-colors flex items-center gap-2 ${
+                    i === selectedCmdIdx ? 'bg-pi-surface' : ''
+                  }`}
+                >
+                  <span className="text-pi-muted">@</span>
+                  <span className="text-pi-text truncate">{file.path}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Queued messages indicator */}
+          {(queuedSteering.length > 0 || queuedFollowUp.length > 0) && (
+            <div className="mb-2 px-2 py-1.5 bg-pi-surface/50 rounded text-[11px] text-pi-muted">
+              <div className="flex items-center gap-2">
+                <span>Queued:</span>
+                {queuedSteering.length > 0 && (
+                  <span className="text-pi-warning">{queuedSteering.length} steer</span>
+                )}
+                {queuedFollowUp.length > 0 && (
+                  <span className="text-pi-accent">{queuedFollowUp.length} follow-up</span>
+                )}
+                <button
+                  onClick={() => {
+                    onClearQueue();
+                    // Restore queued messages to input
+                    const allQueued = [...queuedSteering, ...queuedFollowUp];
+                    if (allQueued.length > 0) {
+                      setInputValue(allQueued.join('\n'));
+                      setQueuedSteering([]);
+                      setQueuedFollowUp([]);
+                    }
+                  }}
+                  className="text-pi-muted hover:text-pi-text ml-auto"
+                >
+                  ✕ clear
+                </button>
+              </div>
+              {/* Show actual message content */}
+              <div className="mt-1 space-y-0.5 max-h-[60px] overflow-y-auto">
+                {queuedSteering.map((msg, i) => (
+                  <div key={`steer-${i}`} className="text-pi-warning truncate">
+                    → {msg}
+                  </div>
+                ))}
+                {queuedFollowUp.map((msg, i) => (
+                  <div key={`followup-${i}`} className="text-pi-accent truncate">
+                    → {msg}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           
           {/* Resume session menu */}
           {showResumeMenu && (
             <div 
-              className="absolute bottom-full left-3 right-3 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[300px] overflow-y-auto"
+              className="absolute bottom-full left-3 right-3 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[300px] overflow-y-auto z-50"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="p-2 border-b border-pi-border">
@@ -909,6 +1328,16 @@ export function Pane({
             </div>
           )}
 
+          {/* Hidden file input (shared between mobile and desktop) */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
           <div className="flex items-start gap-2">
             <span className={`text-[14px] mt-0.5 ${isStreaming ? 'text-pi-warning' : 'text-pi-muted'} hidden sm:block`}>
               {isStreaming ? '›' : '›'}
@@ -930,47 +1359,75 @@ export function Pane({
                 target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
               }}
             />
-            {isStreaming && (
-              <div className="hidden sm:flex items-center gap-1 mt-0.5 flex-shrink-0">
+            {/* Desktop action buttons */}
+            <div className="hidden sm:flex items-center gap-1 flex-shrink-0">
+              {/* Attach image */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-1.5 text-pi-muted hover:text-pi-text transition-colors rounded"
+                title="Attach image"
+              >
+                <ImagePlus className="w-4 h-4" />
+              </button>
+              
+              {/* Streaming mode toggle */}
+              {isStreaming && (
                 <button
-                  onClick={() => setStreamingInputMode('steer')}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-                    streamingInputMode === 'steer'
-                      ? 'bg-pi-warning/20 text-pi-warning'
-                      : 'text-pi-muted hover:text-pi-text'
+                  onClick={() => setStreamingInputMode(m => m === 'steer' ? 'followUp' : 'steer')}
+                  className={`px-1.5 text-[10px] opacity-60 hover:opacity-100 transition-opacity ${
+                    streamingInputMode === 'steer' ? 'text-pi-warning' : 'text-pi-accent'
                   }`}
-                  title="Steer: interrupt and redirect the agent immediately"
+                  title={streamingInputMode === 'steer' 
+                    ? 'Steer: interrupt immediately (hold Alt for follow-up)' 
+                    : 'Follow-up: queue after response (release Alt for steer)'}
                 >
-                  <Zap className="w-3 h-3" />
-                  steer
+                  {streamingInputMode === 'steer' ? 'steer' : 'follow-up'}
                 </button>
+              )}
+              
+              {/* Stop agent */}
+              {isStreaming && (
                 <button
-                  onClick={() => setStreamingInputMode('followUp')}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-                    streamingInputMode === 'followUp'
-                      ? 'bg-pi-accent/20 text-pi-accent'
-                      : 'text-pi-muted hover:text-pi-text'
-                  }`}
-                  title="Follow-up: queue message to send after current response"
+                  onClick={onAbort}
+                  className="p-1.5 text-pi-error hover:text-pi-error/80 transition-colors rounded"
+                  title="Stop agent"
                 >
-                  <Clock className="w-3 h-3" />
-                  queue
+                  <Square className="w-4 h-4" />
                 </button>
-              </div>
-            )}
+              )}
+              
+              {/* Send message */}
+              <button
+                onClick={handleSend}
+                disabled={!inputValue.trim() && attachedImages.length === 0}
+                className={`p-1.5 transition-colors rounded disabled:opacity-30 disabled:cursor-not-allowed ${
+                  isStreaming && streamingInputMode === 'steer'
+                    ? 'text-pi-warning hover:text-pi-warning/80'
+                    : 'text-pi-accent hover:text-pi-accent-hover'
+                }`}
+                title={isStreaming ? (streamingInputMode === 'steer' ? "Steer agent" : "Queue follow-up") : "Send message"}
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           
           {/* Mobile action buttons */}
-          <div className="flex sm:hidden items-center gap-2 mt-2 pt-2 border-t border-pi-border">
-            {/* Hidden file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-            />
+          <div className="flex sm:hidden items-center gap-1 mt-2 pt-2 border-t border-pi-border">
+            
+            {/* Slash command menu */}
+            <button
+              onClick={() => {
+                setInputValue('/');
+                setShowSlashMenu(true);
+                setSlashFilter('/');
+                inputRef.current?.focus();
+              }}
+              className="p-3 text-pi-muted hover:text-pi-text active:text-pi-accent transition-colors rounded"
+              title="Commands"
+            >
+              <Command className="w-6 h-6" />
+            </button>
             
             {/* Attach image */}
             <button
@@ -981,35 +1438,22 @@ export function Pane({
               <ImagePlus className="w-6 h-6" />
             </button>
             
+            <div className="flex-1" />
+            
             {/* Streaming mode toggle - only show when streaming */}
             {isStreaming && (
-              <>
-                <button
-                  onClick={() => setStreamingInputMode('steer')}
-                  className={`p-3 rounded transition-colors ${
-                    streamingInputMode === 'steer'
-                      ? 'text-pi-warning bg-pi-warning/20'
-                      : 'text-pi-muted hover:text-pi-text'
-                  }`}
-                  title="Steer: interrupt and redirect immediately"
-                >
-                  <Zap className="w-6 h-6" />
-                </button>
-                <button
-                  onClick={() => setStreamingInputMode('followUp')}
-                  className={`p-3 rounded transition-colors ${
-                    streamingInputMode === 'followUp'
-                      ? 'text-pi-accent bg-pi-accent/20'
-                      : 'text-pi-muted hover:text-pi-text'
-                  }`}
-                  title="Queue: send after current response"
-                >
-                  <Clock className="w-6 h-6" />
-                </button>
-              </>
+              <button
+                onClick={() => setStreamingInputMode(m => m === 'steer' ? 'followUp' : 'steer')}
+                className={`px-2 py-1 text-[12px] opacity-70 active:opacity-100 transition-opacity ${
+                  streamingInputMode === 'steer' ? 'text-pi-warning' : 'text-pi-accent'
+                }`}
+                title={streamingInputMode === 'steer' 
+                  ? 'Steer: interrupt immediately (tap to switch)' 
+                  : 'Follow-up: queue after response (tap to switch)'}
+              >
+                {streamingInputMode === 'steer' ? 'steer' : 'follow-up'}
+              </button>
             )}
-            
-            <div className="flex-1" />
             
             {/* Stop agent */}
             {isStreaming && (
@@ -1038,6 +1482,18 @@ export function Pane({
           </div>
         </div>
       </div>
+
+      {/* Scoped Models Dialog */}
+      <ScopedModelsDialog
+        isOpen={showScopedModels}
+        models={models}
+        scopedModels={scopedModels}
+        onSave={(selectedModels) => {
+          onSetScopedModels(selectedModels);
+          setShowScopedModels(false);
+        }}
+        onClose={() => setShowScopedModels(false)}
+      />
     </div>
   );
 }

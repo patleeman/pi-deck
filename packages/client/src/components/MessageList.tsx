@@ -1,5 +1,9 @@
 import { lazy, Suspense, useState, useMemo } from 'react';
 import type { ChatMessage, MessageContent } from '@pi-web-ui/shared';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { DiffDisplay } from './DiffDisplay';
+
+
 
 // Lazy load markdown for code splitting
 const MarkdownContent = lazy(() => import('./MarkdownContent').then(m => ({ default: m.MarkdownContent })));
@@ -62,6 +66,13 @@ function getToolCalls(content: MessageContent[]): Array<{
     });
 }
 
+// Get thinking content from message
+function getThinkingContent(content: MessageContent[]): string[] {
+  return content
+    .filter((c): c is { type: 'thinking'; thinking: string } => c.type === 'thinking')
+    .map(c => c.thinking);
+}
+
 // Check if text contains markdown that needs rendering
 function hasMarkdown(text: string): boolean {
   return /```|`[^`]+`|\*\*|__|##|\[.+\]\(.+\)|^\s*[-*]\s/m.test(text);
@@ -72,6 +83,16 @@ function PlainText({ content }: { content: string }) {
   return (
     <div className="text-pi-text text-[14px] leading-relaxed whitespace-pre-wrap">
       {content}
+    </div>
+  );
+}
+
+// Thinking block component - TUI style: italic muted text
+function ThinkingBlock({ thinking, isStreaming }: { thinking: string; defaultCollapsed?: boolean; isStreaming?: boolean }) {
+  return (
+    <div className="text-[14px] text-pi-muted/70 italic leading-relaxed whitespace-pre-wrap">
+      {thinking}
+      {isStreaming && <span className="cursor-blink text-pi-accent not-italic">▌</span>}
     </div>
   );
 }
@@ -151,57 +172,28 @@ function formatToolHeader(name: string, rawArgs?: unknown): { prefix: string; de
 }
 
 // Count lines and provide preview/full text
-function getOutputInfo(result: string): { 
+function getOutputInfo(result: string, previewLineCount: number = 15): { 
   lineCount: number; 
   hasMore: boolean; 
   previewText: string; 
   fullText: string;
+  previewLineCount: number;
 } {
   const lines = result.split('\n');
   const lineCount = lines.length;
   
-  // Preview shows first 15 lines
-  const previewLines = 15;
-  const hasMore = lineCount > previewLines;
-  const previewText = lines.slice(0, previewLines).join('\n');
+  // Preview shows first N lines (3 on mobile, 15 on desktop)
+  const hasMore = lineCount > previewLineCount;
+  const previewText = lines.slice(0, previewLineCount).join('\n');
   
   // Full text shows up to 100 lines
   const maxLines = 100;
   const fullText = lines.slice(0, maxLines).join('\n');
   
-  return { lineCount, hasMore, previewText, fullText };
+  return { lineCount, hasMore, previewText, fullText, previewLineCount };
 }
 
-// Generate a simple diff display from oldText and newText
-function generateSimpleDiff(oldText: string, newText: string): { removed: string[]; added: string[] } {
-  const oldLines = oldText.split('\n');
-  const newLines = newText.split('\n');
-  return { removed: oldLines, added: newLines };
-}
 
-// Render diff from edit tool arguments (oldText -> newText)
-function EditDiffDisplay({ oldText, newText }: { oldText: string; newText: string }) {
-  const { removed, added } = generateSimpleDiff(oldText, newText);
-  
-  return (
-    <div className="text-[12px] font-mono">
-      {/* Show removed lines */}
-      {removed.map((line, i) => (
-        <div key={`r-${i}`} className="text-[#ff5c57] bg-[#3a2828] px-2 -mx-2">
-          <span className="text-[#ff5c57]/60 mr-2 select-none">-{i + 1}</span>
-          {line}
-        </div>
-      ))}
-      {/* Show added lines */}
-      {added.map((line, i) => (
-        <div key={`a-${i}`} className="text-[#b5bd68] bg-[#283a28] px-2 -mx-2">
-          <span className="text-[#b5bd68]/60 mr-2 select-none">+{i + 1}</span>
-          {line}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 // Render read output with line numbers
 function ReadDisplay({ content, startLine = 1 }: { content: string; startLine?: number }) {
@@ -237,6 +229,7 @@ function WriteDisplay({ content }: { content: string }) {
 // TUI-style tool call display - matches terminal UI exactly
 function ToolCallDisplay({ 
   tool,
+  previewLines = 5,
 }: { 
   tool: { 
     id: string; 
@@ -246,6 +239,7 @@ function ToolCallDisplay({
     result?: string;
     isError?: boolean;
   };
+  previewLines?: number;
 }) {
   const [expanded, setExpanded] = useState(true);
   const headerInfo = formatToolHeader(tool.name, tool.args);
@@ -254,7 +248,7 @@ function ToolCallDisplay({
   const args = parseArgs(tool.args);
   
   const hasResult = tool.result && tool.result.length > 0;
-  const outputInfo = hasResult ? getOutputInfo(tool.result!) : null;
+  const outputInfo = hasResult ? getOutputInfo(tool.result!, previewLines) : null;
   
   // Check tool type for specialized rendering
   const toolName = tool.name.toLowerCase();
@@ -291,7 +285,7 @@ function ToolCallDisplay({
       {/* Edit diff display - from args */}
       {hasEditDiff && expanded && (
         <div className="px-4 pb-3">
-          <EditDiffDisplay 
+          <DiffDisplay 
             oldText={String(args.oldText)} 
             newText={String(args.newText)} 
           />
@@ -304,7 +298,7 @@ function ToolCallDisplay({
           <ReadDisplay content={outputInfo!.previewText} startLine={readStartLine} />
           {outputInfo!.hasMore && (
             <div className="text-pi-muted/50 mt-2 text-[11px]">
-              ... ({outputInfo!.lineCount - 15} more lines)
+              ... ({outputInfo!.lineCount - outputInfo!.previewLineCount} more lines)
             </div>
           )}
         </div>
@@ -316,7 +310,7 @@ function ToolCallDisplay({
           <ReadDisplay content={outputInfo!.previewText} startLine={1} />
           {outputInfo!.hasMore && (
             <div className="text-pi-muted/50 mt-2 text-[11px]">
-              ... ({outputInfo!.lineCount - 15} more lines)
+              ... ({outputInfo!.lineCount - outputInfo!.previewLineCount} more lines)
             </div>
           )}
         </div>
@@ -335,7 +329,7 @@ function ToolCallDisplay({
 // User message display - distinct background like TUI (full-width, cyan/teal tinted)
 function UserMessage({ text }: { text: string }) {
   return (
-    <div className="-mx-4 bg-[#193549] border-l-2 border-[#00d7ff] px-4 py-3 font-mono text-[14px] text-pi-text whitespace-pre-wrap">
+    <div className="-mx-4 bg-pi-user-bg border-l-2 border-pi-accent px-4 py-3 font-mono text-[14px] text-pi-text whitespace-pre-wrap">
       {text}
     </div>
   );
@@ -349,6 +343,10 @@ export function MessageList({
   isStreaming,
   activeToolExecutions,
 }: MessageListProps) {
+  const isMobile = useIsMobile();
+  // On mobile, show only 3 lines of tool output; on desktop, show 5
+  const previewLines = isMobile ? 3 : 5;
+
   // Deduplicate messages by id (prevent rendering duplicates)
   const uniqueMessages = useMemo(() => {
     const seen = new Set<string>();
@@ -385,6 +383,7 @@ export function MessageList({
         if (msg.role === 'assistant') {
           const text = getTextContent(msg.content);
           const tools = getToolCalls(msg.content);
+          const thinkingBlocks = getThinkingContent(msg.content);
           const needsMarkdown = hasMarkdown(text);
           
           // Merge tool results from separate toolResult messages
@@ -398,11 +397,20 @@ export function MessageList({
           
           return (
             <div key={msgKey} className="flex flex-col gap-4">
+              {/* Thinking blocks */}
+              {thinkingBlocks.map((thinking, idx) => (
+                <ThinkingBlock
+                  key={`${msgKey}-thinking-${idx}`}
+                  thinking={thinking}
+                />
+              ))}
+              
               {/* Tool calls - TUI style with background */}
               {toolsWithResults.map((tool) => (
                 <ToolCallDisplay 
                   key={`${msgKey}-tool-${tool.id}`} 
                   tool={tool}
+                  previewLines={previewLines}
                 />
               ))}
               
@@ -438,13 +446,22 @@ export function MessageList({
             result: tool.result,
             isError: tool.isError,
           }}
+          previewLines={previewLines}
         />
       ))}
 
       {/* Streaming content */}
       {isStreaming && (streamingText || streamingThinking) && (
-        <div className="flex flex-col gap-2">
-          {/* Streaming thinking - hidden */}
+        <div className="flex flex-col gap-4">
+          {/* Streaming thinking */}
+          {streamingThinking && (
+            <ThinkingBlock
+              thinking={streamingThinking}
+              isStreaming={true}
+            />
+          )}
+          
+          {/* Streaming text */}
           {streamingText && (
             <div>
               {hasMarkdown(streamingText) ? (

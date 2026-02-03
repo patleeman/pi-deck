@@ -148,6 +148,7 @@ export interface WsSteerMessage extends WorkspaceScopedMessage {
   type: 'steer';
   sessionSlotId?: string;
   message: string;
+  images?: ImageAttachment[];
 }
 
 export interface WsFollowUpMessage extends WorkspaceScopedMessage {
@@ -287,6 +288,8 @@ export interface WsBashMessage extends WorkspaceScopedMessage {
   type: 'bash';
   sessionSlotId?: string;
   command: string;
+  /** If true, output won't be sent to LLM (!! prefix) */
+  excludeFromContext?: boolean;
 }
 
 export interface WsAbortBashMessage extends WorkspaceScopedMessage {
@@ -323,6 +326,80 @@ export interface WsQuestionnaireResponseMessage extends WorkspaceScopedMessage {
   toolCallId: string;
   answers: QuestionnaireAnswer[];
   cancelled: boolean;
+}
+
+// ============================================================================
+// New Feature Messages
+// ============================================================================
+
+// Session tree navigation
+export interface WsGetSessionTreeMessage extends WorkspaceScopedMessage {
+  type: 'getSessionTree';
+  sessionSlotId?: string;
+}
+
+export interface WsNavigateTreeMessage extends WorkspaceScopedMessage {
+  type: 'navigateTree';
+  sessionSlotId?: string;
+  targetId: string;
+  summarize?: boolean;
+}
+
+// Copy last assistant text
+export interface WsCopyLastAssistantMessage extends WorkspaceScopedMessage {
+  type: 'copyLastAssistant';
+  sessionSlotId?: string;
+}
+
+// Share session as gist
+export interface WsShareSessionMessage extends WorkspaceScopedMessage {
+  type: 'shareSession';
+  sessionSlotId?: string;
+}
+
+// OAuth login/logout
+export interface WsLoginMessage {
+  type: 'login';
+  provider: string;
+}
+
+export interface WsLogoutMessage {
+  type: 'logout';
+  provider: string;
+}
+
+export interface WsGetAuthProvidersMessage {
+  type: 'getAuthProviders';
+}
+
+// Scoped models
+export interface WsGetScopedModelsMessage extends WorkspaceScopedMessage {
+  type: 'getScopedModels';
+  sessionSlotId?: string;
+}
+
+export interface WsSetScopedModelsMessage extends WorkspaceScopedMessage {
+  type: 'setScopedModels';
+  sessionSlotId?: string;
+  models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>;
+}
+
+// Queued messages
+export interface WsGetQueuedMessagesMessage extends WorkspaceScopedMessage {
+  type: 'getQueuedMessages';
+  sessionSlotId?: string;
+}
+
+export interface WsClearQueueMessage extends WorkspaceScopedMessage {
+  type: 'clearQueue';
+  sessionSlotId?: string;
+}
+
+// File listing for @ reference
+export interface WsListFilesMessage extends WorkspaceScopedMessage {
+  type: 'listFiles';
+  query?: string;
+  limit?: number;
 }
 
 export type WsClientMessage =
@@ -384,7 +461,22 @@ export type WsClientMessage =
   // Questionnaire
   | WsQuestionnaireResponseMessage
   // Config
-  | WsUpdateAllowedRootsMessage;
+  | WsUpdateAllowedRootsMessage
+  // New features
+  | WsGetSessionTreeMessage
+  | WsNavigateTreeMessage
+  | WsCopyLastAssistantMessage
+  | WsShareSessionMessage
+  | WsLoginMessage
+  | WsLogoutMessage
+  | WsGetAuthProvidersMessage
+  | WsGetScopedModelsMessage
+  | WsSetScopedModelsMessage
+  | WsGetQueuedMessagesMessage
+  | WsClearQueueMessage
+  | WsListFilesMessage
+  // Extension UI
+  | WsExtensionUIResponseMessage;
 
 // ============================================================================
 // WebSocket Messages (Server -> Client)
@@ -712,6 +804,8 @@ export interface WsBashStartEvent {
   workspaceId: string;
   sessionSlotId?: string;
   command: string;
+  /** If true, output won't be sent to LLM (!! prefix) */
+  excludeFromContext?: boolean;
 }
 
 export interface WsBashOutputEvent {
@@ -741,6 +835,89 @@ export interface WsQuestionnaireRequestEvent {
 export interface WsAllowedRootsUpdatedEvent {
   type: 'allowedRootsUpdated';
   roots: string[];
+}
+
+// ============================================================================
+// New Feature Server Events
+// ============================================================================
+
+// Session tree response
+export interface WsSessionTreeEvent {
+  type: 'sessionTree';
+  workspaceId: string;
+  sessionSlotId?: string;
+  tree: SessionTreeNode[];
+  currentLeafId: string | null;
+}
+
+// Navigate tree result
+export interface WsNavigateTreeResultEvent {
+  type: 'navigateTreeResult';
+  workspaceId: string;
+  sessionSlotId?: string;
+  success: boolean;
+  editorText?: string;
+  error?: string;
+}
+
+// Copy result
+export interface WsCopyResultEvent {
+  type: 'copyResult';
+  workspaceId: string;
+  sessionSlotId?: string;
+  success: boolean;
+  text?: string;
+  error?: string;
+}
+
+// Share result
+export interface WsShareResultEvent {
+  type: 'shareResult';
+  workspaceId: string;
+  sessionSlotId?: string;
+  success: boolean;
+  url?: string;
+  error?: string;
+}
+
+// Auth providers list
+export interface WsAuthProvidersEvent {
+  type: 'authProviders';
+  providers: OAuthProviderInfo[];
+  authenticated: string[]; // List of providers with valid auth
+}
+
+// Login status
+export interface WsLoginStatusEvent {
+  type: 'loginStatus';
+  provider: string;
+  status: 'pending' | 'success' | 'error';
+  message?: string;
+  authUrl?: string; // URL to open for OAuth
+}
+
+// Scoped models response
+export interface WsScopedModelsEvent {
+  type: 'scopedModels';
+  workspaceId: string;
+  sessionSlotId?: string;
+  models: ScopedModelInfo[];
+}
+
+// Queued messages response
+export interface WsQueuedMessagesEvent {
+  type: 'queuedMessages';
+  workspaceId: string;
+  sessionSlotId?: string;
+  steering: string[];
+  followUp: string[];
+}
+
+// File list response
+export interface WsFileListEvent {
+  type: 'fileList';
+  workspaceId: string;
+  files: FileInfo[];
 }
 
 export type WsServerEvent =
@@ -787,7 +964,19 @@ export type WsServerEvent =
   // Questionnaire
   | WsQuestionnaireRequestEvent
   // Config
-  | WsAllowedRootsUpdatedEvent;
+  | WsAllowedRootsUpdatedEvent
+  // New features
+  | WsSessionTreeEvent
+  | WsNavigateTreeResultEvent
+  | WsCopyResultEvent
+  | WsShareResultEvent
+  | WsAuthProvidersEvent
+  | WsLoginStatusEvent
+  | WsScopedModelsEvent
+  | WsQueuedMessagesEvent
+  | WsFileListEvent
+  // Extension UI
+  | WsExtensionUIRequestEvent;
 
 // ============================================================================
 // Data Types
@@ -1048,4 +1237,141 @@ export interface StartupInfo {
   themes: StartupResourceInfo[];
   /** Keyboard shortcuts hint */
   shortcuts: Array<{ key: string; description: string }>;
+}
+
+// ============================================================================
+// New Feature Data Types
+// ============================================================================
+
+/** Session tree node for /tree navigation */
+export interface SessionTreeNode {
+  id: string;
+  parentId: string | null;
+  type: 'message' | 'compaction' | 'branch_summary' | 'model_change' | 'thinking_level_change' | 'other';
+  /** For message nodes: role */
+  role?: 'user' | 'assistant' | 'toolResult';
+  /** Preview text for display */
+  text: string;
+  /** User-defined label/bookmark */
+  label?: string;
+  /** Timestamp */
+  timestamp: number;
+  /** Child nodes */
+  children: SessionTreeNode[];
+}
+
+/** OAuth provider info */
+export interface OAuthProviderInfo {
+  id: string;
+  name: string;
+  /** Whether this provider supports OAuth login */
+  supportsOAuth: boolean;
+}
+
+/** Scoped model info (for Ctrl+P cycling) */
+export interface ScopedModelInfo {
+  provider: string;
+  modelId: string;
+  modelName: string;
+  thinkingLevel: ThinkingLevel;
+  /** Whether this model is currently enabled for cycling */
+  enabled: boolean;
+}
+
+/** File info for @ reference */
+export interface FileInfo {
+  /** Relative path from workspace root */
+  path: string;
+  /** File name only */
+  name: string;
+  /** Whether it's a directory */
+  isDirectory: boolean;
+}
+
+// ============================================================================
+// Extension UI Types (for interactive extension commands like /review)
+// ============================================================================
+
+/** Extension UI request types */
+export type ExtensionUIRequestType = 'select' | 'confirm' | 'input' | 'editor' | 'notify';
+
+/** Base interface for extension UI requests */
+interface ExtensionUIRequestBase {
+  /** Unique request ID for matching responses */
+  requestId: string;
+  /** Timeout in milliseconds (optional) */
+  timeout?: number;
+}
+
+/** Select from a list of options */
+export interface ExtensionUISelectRequest extends ExtensionUIRequestBase {
+  method: 'select';
+  title: string;
+  options: string[];
+}
+
+/** Confirm a yes/no question */
+export interface ExtensionUIConfirmRequest extends ExtensionUIRequestBase {
+  method: 'confirm';
+  title: string;
+  message: string;
+}
+
+/** Input a single line of text */
+export interface ExtensionUIInputRequest extends ExtensionUIRequestBase {
+  method: 'input';
+  title: string;
+  placeholder?: string;
+}
+
+/** Multi-line text editor */
+export interface ExtensionUIEditorRequest extends ExtensionUIRequestBase {
+  method: 'editor';
+  title: string;
+  prefill?: string;
+}
+
+/** Notification (no response needed) */
+export interface ExtensionUINotifyRequest {
+  method: 'notify';
+  message: string;
+  notifyType?: 'info' | 'warning' | 'error';
+}
+
+/** Union of all extension UI request types */
+export type ExtensionUIRequest =
+  | ExtensionUISelectRequest
+  | ExtensionUIConfirmRequest
+  | ExtensionUIInputRequest
+  | ExtensionUIEditorRequest
+  | ExtensionUINotifyRequest;
+
+/** Extension UI response */
+export interface ExtensionUIResponse {
+  /** The request ID this response is for */
+  requestId: string;
+  /** Whether the user cancelled */
+  cancelled: boolean;
+  /** The result value (type depends on request type) */
+  value?: string | boolean;
+}
+
+// ============================================================================
+// Extension UI WebSocket Messages
+// ============================================================================
+
+/** Server -> Client: Extension needs UI interaction */
+export interface WsExtensionUIRequestEvent {
+  type: 'extensionUIRequest';
+  workspaceId: string;
+  sessionSlotId?: string;
+  request: ExtensionUIRequest;
+}
+
+/** Client -> Server: User responded to extension UI */
+export interface WsExtensionUIResponseMessage {
+  type: 'extensionUIResponse';
+  workspaceId: string;
+  sessionSlotId?: string;
+  response: ExtensionUIResponse;
 }

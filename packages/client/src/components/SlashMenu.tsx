@@ -28,7 +28,7 @@ export function SlashMenu({ commands, selectedIndex, onSelect }: SlashMenuProps)
   return (
     <div 
       ref={containerRef}
-      className="absolute bottom-full left-0 right-0 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[200px] overflow-y-auto"
+      className="absolute bottom-full left-0 right-0 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50"
     >
       {commands.map((cmd, i) => {
         // Truncate description to ~50 chars

@@ -23,6 +23,16 @@ interface ToolExecution {
   isError?: boolean;
 }
 
+/** State for a bash execution */
+export interface BashExecution {
+  command: string;
+  output: string;
+  isRunning: boolean;
+  exitCode?: number | null;
+  isError?: boolean;
+  excludeFromContext: boolean;
+}
+
 /** State for a single session slot (pane) */
 export interface SessionSlotState {
   slotId: string;
@@ -33,6 +43,8 @@ export interface SessionSlotState {
   streamingText: string;
   streamingThinking: string;
   activeToolExecutions: ToolExecution[];
+  /** Active or recent bash execution (from ! or !! commands) */
+  bashExecution: BashExecution | null;
 }
 
 /** State for a workspace (contains multiple session slots) */
@@ -84,7 +96,9 @@ export interface UseWorkspacesReturn {
 
   // Session slot actions
   createSessionSlot: (slotId: string) => void;
+  createSessionSlotForWorkspace: (workspaceId: string, slotId: string) => void;
   closeSessionSlot: (slotId: string) => void;
+  closeSessionSlotForWorkspace: (workspaceId: string, slotId: string) => void;
   getSlot: (slotId: string) => SessionSlotState | null;
 
   // UI State (persisted to backend)
@@ -99,7 +113,7 @@ export interface UseWorkspacesReturn {
 
   // Session actions (operate on active workspace, specific slot)
   sendPrompt: (slotId: string, message: string, images?: ImageAttachment[]) => void;
-  steer: (slotId: string, message: string) => void;
+  steer: (slotId: string, message: string, images?: ImageAttachment[]) => void;
   followUp: (slotId: string, message: string) => void;
   abort: (slotId: string) => void;
   setModel: (slotId: string, provider: string, modelId: string) => void;
@@ -119,12 +133,37 @@ export interface UseWorkspacesReturn {
   // Questionnaire
   sendQuestionnaireResponse: (slotId: string, toolCallId: string, response: string) => void;
 
+  // Extension UI
+  sendExtensionUIResponse: (slotId: string, response: { requestId: string; cancelled: boolean; value?: string | boolean }) => void;
+
   // Config
   updateAllowedRoots: (roots: string[]) => void;
 
   // Session management
   exportHtml: (slotId: string) => void;
   setSessionName: (slotId: string, name: string) => void;
+
+  // New features
+  // Session tree navigation
+  getSessionTree: (slotId: string) => void;
+  navigateTree: (slotId: string, targetId: string, summarize?: boolean) => void;
+  
+  // Copy last assistant text
+  copyLastAssistant: (slotId: string) => void;
+  
+  // Queued messages
+  getQueuedMessages: (slotId: string) => void;
+  clearQueue: (slotId: string) => void;
+  
+  // Scoped models
+  getScopedModels: (slotId: string) => void;
+  setScopedModels: (slotId: string, models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>) => void;
+  
+  // File listing for @ reference
+  listFiles: (query?: string, limit?: number) => void;
+  
+  // Bash execution
+  executeBash: (slotId: string, command: string, excludeFromContext?: boolean) => void;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 52; // Narrow sidebar per mockup
@@ -139,6 +178,7 @@ function createEmptySlot(slotId: string): SessionSlotState {
     streamingText: '',
     streamingThinking: '',
     activeToolExecutions: [],
+    bashExecution: null,
   };
 }
 
@@ -376,13 +416,29 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
         // Slot-scoped state events
         case 'state': {
           const slotId = getSlotId(event);
-          updateSlot(event.workspaceId, slotId, { state: event.state });
+          // Sync isStreaming from server state - if server says not streaming, clear streaming state
+          const updates: Partial<SessionSlotState> = { state: event.state };
+          if (!event.state.isStreaming) {
+            updates.isStreaming = false;
+            updates.streamingText = '';
+            updates.streamingThinking = '';
+          }
+          updateSlot(event.workspaceId, slotId, updates);
           break;
         }
 
         case 'messages': {
           const slotId = getSlotId(event);
-          updateSlot(event.workspaceId, slotId, { messages: event.messages });
+          // When messages are replaced (e.g., newSession, switchSession), also clear streaming state
+          // to ensure no stale content remains visible
+          updateSlot(event.workspaceId, slotId, { 
+            messages: event.messages,
+            isStreaming: false,
+            streamingText: '',
+            streamingThinking: '',
+            activeToolExecutions: [],
+            bashExecution: null,
+          });
           break;
         }
 
@@ -480,6 +536,14 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
               if (ws.id !== event.workspaceId) return ws;
               const slot = ws.slots[slotId];
               if (!slot) return ws;
+              
+              // Extract tool call IDs from the completed message to remove from activeToolExecutions
+              const completedToolIds = new Set(
+                event.message.content
+                  .filter((c) => c.type === 'toolCall')
+                  .map((c) => (c as { id: string }).id)
+              );
+              
               return {
                 ...ws,
                 slots: {
@@ -491,6 +555,10 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
                     ),
                     streamingText: '',
                     streamingThinking: '',
+                    // Remove completed tool calls from active executions
+                    activeToolExecutions: slot.activeToolExecutions.filter(
+                      (t) => !completedToolIds.has(t.toolCallId)
+                    ),
                   },
                 },
               };
@@ -557,6 +625,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
 
         case 'toolEnd': {
           const slotId = getSlotId(event);
+          // Remove completed tool from activeToolExecutions - it's now in the message content
           setWorkspaces((prev) =>
             prev.map((ws) => {
               if (ws.id !== event.workspaceId) return ws;
@@ -568,15 +637,8 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
                   ...ws.slots,
                   [slotId]: {
                     ...slot,
-                    activeToolExecutions: slot.activeToolExecutions.map((t) =>
-                      t.toolCallId === event.toolCallId
-                        ? {
-                            ...t,
-                            status: event.isError ? ('error' as const) : ('complete' as const),
-                            result: event.result,
-                            isError: event.isError,
-                          }
-                        : t
+                    activeToolExecutions: slot.activeToolExecutions.filter(
+                      (t) => t.toolCallId !== event.toolCallId
                     ),
                   },
                 },
@@ -637,6 +699,167 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
                         toolCallId: event.toolCallId,
                         questions: event.questions,
                       },
+                    },
+                  },
+                },
+              };
+            })
+          );
+          break;
+        }
+
+        // New feature events
+        case 'sessionTree': {
+          const customEvent = new CustomEvent('pi:sessionTree', {
+            detail: {
+              workspaceId: event.workspaceId,
+              sessionSlotId: event.sessionSlotId,
+              tree: event.tree,
+              currentLeafId: event.currentLeafId,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          break;
+        }
+
+        case 'navigateTreeResult': {
+          const customEvent = new CustomEvent('pi:navigateTreeResult', {
+            detail: {
+              workspaceId: event.workspaceId,
+              sessionSlotId: event.sessionSlotId,
+              success: event.success,
+              editorText: event.editorText,
+              error: event.error,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          break;
+        }
+
+        case 'copyResult': {
+          const customEvent = new CustomEvent('pi:copyResult', {
+            detail: {
+              workspaceId: event.workspaceId,
+              sessionSlotId: event.sessionSlotId,
+              success: event.success,
+              text: event.text,
+              error: event.error,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          break;
+        }
+
+        case 'queuedMessages': {
+          console.log(`[useWorkspaces] Received queuedMessages - workspaceId: ${event.workspaceId}, slotId: ${event.sessionSlotId}`);
+          console.log(`[useWorkspaces] steering: ${JSON.stringify(event.steering)}, followUp: ${JSON.stringify(event.followUp)}`);
+          const customEvent = new CustomEvent('pi:queuedMessages', {
+            detail: {
+              workspaceId: event.workspaceId,
+              sessionSlotId: event.sessionSlotId,
+              steering: event.steering,
+              followUp: event.followUp,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          console.log(`[useWorkspaces] Dispatched pi:queuedMessages event`);
+          break;
+        }
+
+        case 'scopedModels': {
+          const customEvent = new CustomEvent('pi:scopedModels', {
+            detail: {
+              workspaceId: event.workspaceId,
+              sessionSlotId: event.sessionSlotId,
+              models: event.models,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          break;
+        }
+
+        case 'fileList': {
+          const customEvent = new CustomEvent('pi:fileList', {
+            detail: {
+              workspaceId: event.workspaceId,
+              files: event.files,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          break;
+        }
+
+        case 'extensionUIRequest': {
+          // Dispatch event for extension UI request (select, confirm, input, editor)
+          const customEvent = new CustomEvent('pi:extensionUIRequest', {
+            detail: {
+              workspaceId: event.workspaceId,
+              sessionSlotId: event.sessionSlotId,
+              request: event.request,
+            },
+          });
+          window.dispatchEvent(customEvent);
+          break;
+        }
+
+        // Bash execution events (! and !! commands)
+        case 'bashStart': {
+          const slotId = event.sessionSlotId || 'default';
+          updateSlot(event.workspaceId, slotId, {
+            bashExecution: {
+              command: event.command,
+              output: '',
+              isRunning: true,
+              excludeFromContext: event.excludeFromContext ?? false,
+            },
+          });
+          break;
+        }
+
+        case 'bashOutput': {
+          const slotId = event.sessionSlotId || 'default';
+          setWorkspaces((prev) =>
+            prev.map((ws) => {
+              if (ws.id !== event.workspaceId) return ws;
+              const slot = ws.slots[slotId];
+              if (!slot || !slot.bashExecution) return ws;
+              return {
+                ...ws,
+                slots: {
+                  ...ws.slots,
+                  [slotId]: {
+                    ...slot,
+                    bashExecution: {
+                      ...slot.bashExecution,
+                      output: slot.bashExecution.output + event.chunk,
+                    },
+                  },
+                },
+              };
+            })
+          );
+          break;
+        }
+
+        case 'bashEnd': {
+          const slotId = event.sessionSlotId || 'default';
+          setWorkspaces((prev) =>
+            prev.map((ws) => {
+              if (ws.id !== event.workspaceId) return ws;
+              const slot = ws.slots[slotId];
+              if (!slot || !slot.bashExecution) return ws;
+              return {
+                ...ws,
+                slots: {
+                  ...ws.slots,
+                  [slotId]: {
+                    ...slot,
+                    bashExecution: {
+                      ...slot.bashExecution,
+                      // Don't append stdout/stderr here - they were already streamed via bashOutput events
+                      isRunning: false,
+                      exitCode: event.result.exitCode,
+                      isError: (event.result.exitCode !== 0) || Boolean(event.result.stderr),
                     },
                   },
                 },
@@ -797,10 +1020,14 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'createSessionSlot', workspaceId, slotId })
       ),
+    createSessionSlotForWorkspace: (workspaceId: string, slotId: string) =>
+      send({ type: 'createSessionSlot', workspaceId, slotId }),
     closeSessionSlot: (slotId: string) =>
       withActiveWorkspace((workspaceId) =>
         send({ type: 'closeSessionSlot', workspaceId, sessionSlotId: slotId })
       ),
+    closeSessionSlotForWorkspace: (workspaceId: string, slotId: string) =>
+      send({ type: 'closeSessionSlot', workspaceId, sessionSlotId: slotId }),
     getSlot,
 
     sidebarWidth,
@@ -816,10 +1043,11 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'prompt', workspaceId, sessionSlotId: slotId, message, images })
       ),
-    steer: (slotId: string, message: string) =>
-      withActiveWorkspace((workspaceId) =>
-        send({ type: 'steer', workspaceId, sessionSlotId: slotId, message })
-      ),
+    steer: (slotId: string, message: string, images?: ImageAttachment[]) =>
+      withActiveWorkspace((workspaceId) => {
+        console.log(`[useWorkspaces.steer] Sending steer - workspaceId: ${workspaceId}, slotId: ${slotId}, message: "${message?.substring(0, 50)}"`);
+        send({ type: 'steer', workspaceId, sessionSlotId: slotId, message, images });
+      }),
     followUp: (slotId: string, message: string) =>
       withActiveWorkspace((workspaceId) =>
         send({ type: 'followUp', workspaceId, sessionSlotId: slotId, message })
@@ -893,6 +1121,17 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
         }
       }),
 
+    // Extension UI
+    sendExtensionUIResponse: (slotId: string, response: { requestId: string; cancelled: boolean; value?: string | boolean }) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ 
+          type: 'extensionUIResponse', 
+          workspaceId, 
+          sessionSlotId: slotId,
+          response,
+        })
+      ),
+
     // Config
     updateAllowedRoots: (roots: string[]) => {
       send({ type: 'updateAllowedRoots', roots });
@@ -908,5 +1147,55 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'setSessionName', workspaceId, sessionSlotId: slotId, name })
       ),
+
+    // New features
+    // Session tree navigation
+    getSessionTree: (slotId: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'getSessionTree', workspaceId, sessionSlotId: slotId })
+      ),
+    navigateTree: (slotId: string, targetId: string, summarize?: boolean) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'navigateTree', workspaceId, sessionSlotId: slotId, targetId, summarize })
+      ),
+    
+    // Copy last assistant text
+    copyLastAssistant: (slotId: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'copyLastAssistant', workspaceId, sessionSlotId: slotId })
+      ),
+    
+    // Queued messages
+    getQueuedMessages: (slotId: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'getQueuedMessages', workspaceId, sessionSlotId: slotId })
+      ),
+    clearQueue: (slotId: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'clearQueue', workspaceId, sessionSlotId: slotId })
+      ),
+    
+    // Scoped models
+    getScopedModels: (slotId: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'getScopedModels', workspaceId, sessionSlotId: slotId })
+      ),
+    setScopedModels: (slotId: string, models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'setScopedModels', workspaceId, sessionSlotId: slotId, models })
+      ),
+    
+    // File listing for @ reference
+    listFiles: (query?: string, limit?: number) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'listFiles', workspaceId, query, limit })
+      ),
+    
+    // Bash execution
+    executeBash: (slotId: string, command: string, excludeFromContext?: boolean) =>
+      withActiveWorkspace((workspaceId) => {
+        // Pi SDK handles the context inclusion - just pass the flag
+        send({ type: 'bash', workspaceId, sessionSlotId: slotId, command, excludeFromContext });
+      }),
   };
 }

@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   SessionEvent,
   WsServerEvent,
+  ExtensionUIRequest,
 } from '@pi-web-ui/shared';
 
 interface Workspace {
@@ -240,12 +241,36 @@ export class WorkspaceManager extends EventEmitter {
       this.emit('event', event);
     };
 
+    // Listen for extension UI requests
+    const extensionUIHandler = (data: { request: ExtensionUIRequest; sessionSlotId: string }) => {
+      const event: WsServerEvent = {
+        type: 'extensionUIRequest',
+        workspaceId,
+        sessionSlotId: data.sessionSlotId,
+        request: data.request,
+      };
+      // Extension UI requests should always be sent (even if buffered events would be dropped)
+      // because they need immediate user interaction
+      this.emit('event', event);
+    };
+
+    // Listen for extension notifications
+    const notificationHandler = (data: { message: string; type: 'info' | 'warning' | 'error'; sessionSlotId: string }) => {
+      // Could emit as a special event or just log for now
+      console.log(`[Extension Notification] [${data.type}] ${data.message}`);
+      // TODO: Could add a WsExtensionNotificationEvent type
+    };
+
     orchestrator.on('event', handler);
     orchestrator.on('slotClosed', slotHandler);
+    orchestrator.on('extensionUIRequest', extensionUIHandler);
+    orchestrator.on('extensionNotification', notificationHandler);
     
     return () => {
       orchestrator.off('event', handler);
       orchestrator.off('slotClosed', slotHandler);
+      orchestrator.off('extensionUIRequest', extensionUIHandler);
+      orchestrator.off('extensionNotification', notificationHandler);
     };
   }
 

@@ -3,8 +3,10 @@ interface StatusBarProps {
   gitBranch: string | null;
   gitChangedFiles: number;
   runningCount: number;
+  compactingCount: number;
   errorCount: number;
   contextPercent?: number;
+  isKeyboardVisible?: boolean;
 }
 
 export function StatusBar({
@@ -12,9 +14,16 @@ export function StatusBar({
   gitBranch,
   gitChangedFiles,
   runningCount,
+  compactingCount,
   errorCount,
   contextPercent,
+  isKeyboardVisible = false,
 }: StatusBarProps) {
+  // Hide status bar when keyboard is visible on mobile
+  if (isKeyboardVisible) {
+    return null;
+  }
+
   return (
     <div 
       className="flex items-center justify-between px-[14px] border-t border-pi-border text-[12px] text-pi-muted font-mono"
@@ -40,6 +49,9 @@ export function StatusBar({
 
       {/* Right side: session status summary */}
       <div className="flex items-center gap-5">
+        {compactingCount > 0 && (
+          <span className="text-pi-warning">Compacting...</span>
+        )}
         {runningCount > 0 && (
           <span>{runningCount} running</span>
         )}

@@ -119,7 +119,12 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
         };
         
         // Auto-close after 5 seconds
-        setTimeout(() => notification.close(), 5000);
+        const closeTimeout = setTimeout(() => notification.close(), 5000);
+        
+        // Clean up timeout if notification is closed early
+        notification.onclose = () => {
+          clearTimeout(closeTimeout);
+        };
       } catch (e) {
         console.warn('Failed to show notification:', e);
       }

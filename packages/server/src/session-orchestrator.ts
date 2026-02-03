@@ -12,6 +12,10 @@ import type {
   ImageAttachment,
   SessionStats,
   BashResult,
+  SessionTreeNode,
+  ScopedModelInfo,
+  ExtensionUIRequest,
+  ExtensionUIResponse,
 } from '@pi-web-ui/shared';
 
 /**
@@ -185,8 +189,13 @@ export class SessionOrchestrator extends EventEmitter {
     return this.getSession(slotId).prompt(message, images);
   }
 
-  async steer(slotId: string, message: string): Promise<void> {
-    return this.getSession(slotId).steer(message);
+  async steer(slotId: string, message: string, images?: ImageAttachment[]): Promise<void> {
+    console.log(`[SessionOrchestrator.steer] slot: ${slotId}, message: "${message?.substring(0, 50)}"`);
+    const session = this.getSession(slotId);
+    console.log(`[SessionOrchestrator.steer] Got session, calling session.steer`);
+    const result = await session.steer(message, images);
+    console.log(`[SessionOrchestrator.steer] session.steer returned`);
+    return result;
   }
 
   async followUp(slotId: string, message: string): Promise<void> {
@@ -291,8 +300,8 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   // Bash execution
-  async executeBash(slotId: string, command: string, onChunk?: (chunk: string) => void): Promise<BashResult> {
-    return this.getSession(slotId).executeBash(command, onChunk);
+  async executeBash(slotId: string, command: string, onChunk?: (chunk: string) => void, excludeFromContext = false): Promise<BashResult> {
+    return this.getSession(slotId).executeBash(command, onChunk, excludeFromContext);
   }
 
   abortBash(slotId: string): void {
@@ -315,16 +324,94 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   // ============================================================================
+  // Session Tree Navigation
+  // ============================================================================
+
+  getSessionTree(slotId: string): { tree: SessionTreeNode[]; currentLeafId: string | null } {
+    return this.getSession(slotId).getSessionTree();
+  }
+
+  async navigateTree(slotId: string, targetId: string, summarize?: boolean): Promise<{ success: boolean; editorText?: string; error?: string }> {
+    return this.getSession(slotId).navigateTree(targetId, summarize);
+  }
+
+  // ============================================================================
+  // Queued Messages
+  // ============================================================================
+
+  getQueuedMessages(slotId: string): { steering: string[]; followUp: string[] } {
+    return this.getSession(slotId).getQueuedMessages();
+  }
+
+  clearQueue(slotId: string): { steering: string[]; followUp: string[] } {
+    return this.getSession(slotId).clearQueue();
+  }
+
+  // ============================================================================
+  // Scoped Models
+  // ============================================================================
+
+  async getScopedModels(slotId: string): Promise<ScopedModelInfo[]> {
+    return this.getSession(slotId).getScopedModels();
+  }
+
+  async setScopedModels(slotId: string, models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>): Promise<void> {
+    return this.getSession(slotId).setScopedModels(models);
+  }
+
+  // ============================================================================
+  // Extension UI
+  // ============================================================================
+
+  /**
+   * Handle an extension UI response from the client.
+   */
+  handleExtensionUIResponse(slotId: string, response: ExtensionUIResponse): void {
+    return this.getSession(slotId).handleExtensionUIResponse(response);
+  }
+
+  /**
+   * Update the stored editor text (for extension UI context).
+   */
+  setEditorTextFromClient(slotId: string, text: string): void {
+    return this.getSession(slotId).setEditorTextFromClient(text);
+  }
+
+  // ============================================================================
   // Private
   // ============================================================================
 
   private subscribeToSession(slotId: string, session: PiSession): () => void {
-    const handler = (event: SessionEvent) => {
+    const eventHandler = (event: SessionEvent) => {
       // Emit event with slotId attached
       this.emit('event', { ...event, sessionSlotId: slotId });
     };
 
-    session.on('event', handler);
-    return () => session.off('event', handler);
+    // Handler for extension UI requests
+    const extensionUIHandler = (request: ExtensionUIRequest) => {
+      this.emit('extensionUIRequest', { request, sessionSlotId: slotId });
+    };
+
+    // Handler for extension notifications
+    const notificationHandler = (notification: { message: string; type: 'info' | 'warning' | 'error' }) => {
+      this.emit('extensionNotification', { ...notification, sessionSlotId: slotId });
+    };
+
+    // Handler for editor text changes from extensions
+    const editorTextHandler = (text: string) => {
+      this.emit('extensionEditorText', { text, sessionSlotId: slotId });
+    };
+
+    session.on('event', eventHandler);
+    session.on('extensionUIRequest', extensionUIHandler);
+    session.on('extensionNotification', notificationHandler);
+    session.on('editorTextChange', editorTextHandler);
+
+    return () => {
+      session.off('event', eventHandler);
+      session.off('extensionUIRequest', extensionUIHandler);
+      session.off('extensionNotification', notificationHandler);
+      session.off('editorTextChange', editorTextHandler);
+    };
   }
 }

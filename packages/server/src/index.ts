@@ -329,9 +329,24 @@ async function handleMessage(
     }
 
     case 'steer': {
+      console.log(`[Steer] Received steer request - workspace: ${message.workspaceId}, slot: ${message.sessionSlotId}, message: "${message.message?.substring(0, 50)}..."`);
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
-      await orchestrator.steer(slotId, message.message);
+      console.log(`[Steer] Calling orchestrator.steer for slot: ${slotId}`);
+      await orchestrator.steer(slotId, message.message, message.images);
+      console.log(`[Steer] orchestrator.steer completed`);
+      // Send updated queue state so UI can show the queued message
+      const steerQueue = orchestrator.getQueuedMessages(slotId);
+      console.log(`[Steer] Queue state - steering: ${steerQueue.steering.length}, followUp: ${steerQueue.followUp.length}`);
+      console.log(`[Steer] Steering messages: ${JSON.stringify(steerQueue.steering)}`);
+      send(ws, {
+        type: 'queuedMessages',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        steering: steerQueue.steering,
+        followUp: steerQueue.followUp,
+      });
+      console.log(`[Steer] Sent queuedMessages event to client`);
       break;
     }
 
@@ -339,6 +354,15 @@ async function handleMessage(
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
       await orchestrator.followUp(slotId, message.message);
+      // Send updated queue state so UI can show the queued message
+      const followQueue = orchestrator.getQueuedMessages(slotId);
+      send(ws, {
+        type: 'queuedMessages',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        steering: followQueue.steering,
+        followUp: followQueue.followUp,
+      });
       break;
     }
 
@@ -678,11 +702,13 @@ async function handleMessage(
     case 'bash': {
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
+      const excludeFromContext = message.excludeFromContext ?? false;
       send(ws, {
         type: 'bashStart',
         workspaceId: message.workspaceId,
         sessionSlotId: slotId,
         command: message.command,
+        excludeFromContext,
       });
       try {
         const result = await orchestrator.executeBash(slotId, message.command, (chunk) => {
@@ -692,7 +718,7 @@ async function handleMessage(
             sessionSlotId: slotId,
             chunk,
           });
-        });
+        }, excludeFromContext);
         send(ws, {
           type: 'bashEnd',
           workspaceId: message.workspaceId,
@@ -832,6 +858,274 @@ async function handleMessage(
         type: 'allowedRootsUpdated',
         roots,
       });
+      break;
+    }
+
+    // ========================================================================
+    // Session Tree Navigation
+    // ========================================================================
+    case 'getSessionTree': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      const { tree, currentLeafId } = orchestrator.getSessionTree(slotId);
+      send(ws, {
+        type: 'sessionTree',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        tree,
+        currentLeafId,
+      });
+      break;
+    }
+
+    case 'navigateTree': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      const result = await orchestrator.navigateTree(slotId, message.targetId, message.summarize);
+      send(ws, {
+        type: 'navigateTreeResult',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        success: result.success,
+        editorText: result.editorText,
+        error: result.error,
+      });
+      // Refresh state and messages after navigation
+      if (result.success) {
+        send(ws, {
+          type: 'state',
+          workspaceId: message.workspaceId,
+          sessionSlotId: slotId,
+          state: await orchestrator.getState(slotId),
+        });
+        send(ws, {
+          type: 'messages',
+          workspaceId: message.workspaceId,
+          sessionSlotId: slotId,
+          messages: orchestrator.getMessages(slotId),
+        });
+      }
+      break;
+    }
+
+    // ========================================================================
+    // Copy Last Assistant Text
+    // ========================================================================
+    case 'copyLastAssistant': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      const text = orchestrator.getLastAssistantText(slotId);
+      send(ws, {
+        type: 'copyResult',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        success: text !== null,
+        text: text ?? undefined,
+        error: text === null ? 'No assistant message to copy' : undefined,
+      });
+      break;
+    }
+
+    // ========================================================================
+    // Queued Messages
+    // ========================================================================
+    case 'getQueuedMessages': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      const { steering, followUp } = orchestrator.getQueuedMessages(slotId);
+      send(ws, {
+        type: 'queuedMessages',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        steering,
+        followUp,
+      });
+      break;
+    }
+
+    case 'clearQueue': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      const { steering, followUp } = orchestrator.clearQueue(slotId);
+      send(ws, {
+        type: 'queuedMessages',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        steering,
+        followUp,
+      });
+      break;
+    }
+
+    // ========================================================================
+    // Scoped Models
+    // ========================================================================
+    case 'getScopedModels': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      const models = await orchestrator.getScopedModels(slotId);
+      send(ws, {
+        type: 'scopedModels',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        models,
+      });
+      break;
+    }
+
+    case 'setScopedModels': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const slotId = getSlotId(message);
+      await orchestrator.setScopedModels(slotId, message.models);
+      // Return updated scoped models
+      const models = await orchestrator.getScopedModels(slotId);
+      send(ws, {
+        type: 'scopedModels',
+        workspaceId: message.workspaceId,
+        sessionSlotId: slotId,
+        models,
+      });
+      break;
+    }
+
+    // ========================================================================
+    // File Listing (for @ reference)
+    // ========================================================================
+    case 'listFiles': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) {
+        send(ws, {
+          type: 'fileList',
+          workspaceId: message.workspaceId,
+          files: [],
+        });
+        break;
+      }
+      
+      // Use find to list files in the workspace
+      const { execSync } = await import('child_process');
+      const limit = message.limit || 100;
+      const query = message.query || '';
+      
+      try {
+        // Find files, excluding common directories
+        let cmd = `find . -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.json" -o -name "*.md" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.css" -o -name "*.html" -o -name "*.yml" -o -name "*.yaml" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" | head -${limit * 2}`;
+        
+        const output = execSync(cmd, {
+          cwd: workspace.path,
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 5000,
+        });
+        
+        let files = output.split('\\n')
+          .filter(Boolean)
+          .map(f => f.replace(/^\\.\//, ''))
+          .map(path => ({
+            path,
+            name: path.split('/').pop() || path,
+            isDirectory: false,
+          }));
+        
+        // Filter by query if provided
+        if (query) {
+          const lowerQuery = query.toLowerCase();
+          files = files.filter(f => 
+            f.path.toLowerCase().includes(lowerQuery) ||
+            f.name.toLowerCase().includes(lowerQuery)
+          );
+        }
+        
+        // Sort: exact name matches first, then path matches
+        files.sort((a, b) => {
+          if (query) {
+            const lowerQuery = query.toLowerCase();
+            const aNameMatch = a.name.toLowerCase().startsWith(lowerQuery);
+            const bNameMatch = b.name.toLowerCase().startsWith(lowerQuery);
+            if (aNameMatch && !bNameMatch) return -1;
+            if (!aNameMatch && bNameMatch) return 1;
+          }
+          return a.path.localeCompare(b.path);
+        });
+        
+        send(ws, {
+          type: 'fileList',
+          workspaceId: message.workspaceId,
+          files: files.slice(0, limit),
+        });
+      } catch {
+        send(ws, {
+          type: 'fileList',
+          workspaceId: message.workspaceId,
+          files: [],
+        });
+      }
+      break;
+    }
+
+    // ========================================================================
+    // Share Session (GitHub Gist) - Not yet implemented
+    // ========================================================================
+    case 'shareSession': {
+      // Share to gist requires GitHub auth - not implementing in this PR
+      send(ws, {
+        type: 'shareResult',
+        workspaceId: message.workspaceId,
+        sessionSlotId: getSlotId(message),
+        success: false,
+        error: 'Share to GitHub Gist is not yet implemented in the web UI',
+      });
+      break;
+    }
+
+    // ========================================================================
+    // Auth (Login/Logout) - Basic support
+    // ========================================================================
+    case 'login': {
+      // OAuth login requires opening browser - basic implementation
+      send(ws, {
+        type: 'loginStatus',
+        provider: message.provider,
+        status: 'error',
+        message: 'OAuth login requires browser interaction. Please use the Pi CLI for OAuth login, or set API keys via environment variables.',
+      });
+      break;
+    }
+
+    case 'logout': {
+      // Logout would clear stored OAuth tokens
+      send(ws, {
+        type: 'loginStatus',
+        provider: message.provider,
+        status: 'error',
+        message: 'Logout is not yet implemented in the web UI. Please use the Pi CLI.',
+      });
+      break;
+    }
+
+    case 'getAuthProviders': {
+      // Return list of providers - basic for now
+      send(ws, {
+        type: 'authProviders',
+        providers: [
+          { id: 'anthropic', name: 'Anthropic', supportsOAuth: true },
+          { id: 'openai', name: 'OpenAI', supportsOAuth: true },
+          { id: 'google', name: 'Google', supportsOAuth: true },
+          { id: 'github-copilot', name: 'GitHub Copilot', supportsOAuth: true },
+        ],
+        authenticated: [], // Would need to check AuthStorage
+      });
+      break;
+    }
+
+    case 'extensionUIResponse': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) {
+        console.warn(`[WS] Workspace not found for extensionUIResponse: ${message.workspaceId}`);
+        break;
+      }
+      const slotId = message.sessionSlotId || 'default';
+      workspace.orchestrator.handleExtensionUIResponse(slotId, message.response);
       break;
     }
 

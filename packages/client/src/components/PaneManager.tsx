@@ -31,7 +31,7 @@ interface PaneManagerProps {
   onClosePane: (paneId: string) => void;
   onResizeNode: (path: number[], sizes: number[]) => void;
   onSendPrompt: (slotId: string, message: string, images?: ImageAttachment[]) => void;
-  onSteer: (slotId: string, message: string) => void;
+  onSteer: (slotId: string, message: string, images?: ImageAttachment[]) => void;
   onAbort: (slotId: string) => void;
   onLoadSession: (slotId: string, sessionId: string) => void;
   onNewSession: (slotId: string) => void;
@@ -45,6 +45,18 @@ interface PaneManagerProps {
   onRenameSession: (slotId: string, name: string) => void;
   onShowHotkeys: () => void;
   onFollowUp: (slotId: string, message: string) => void;
+  onReload: () => void;
+  // New features
+  onGetSessionTree: (slotId: string) => void;
+  onCopyLastAssistant: (slotId: string) => void;
+  onGetQueuedMessages: (slotId: string) => void;
+  onClearQueue: (slotId: string) => void;
+  onListFiles: (slotId: string, query?: string) => void;
+  onExecuteBash: (slotId: string, command: string, excludeFromContext?: boolean) => void;
+  onToggleAllToolsCollapsed: () => void;
+  onToggleAllThinkingCollapsed: () => void;
+  onGetScopedModels: (slotId: string) => void;
+  onSetScopedModels: (slotId: string, models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>) => void;
 }
 
 // Count total panes in layout
@@ -79,6 +91,18 @@ export function PaneManager({
   onRenameSession,
   onShowHotkeys,
   onFollowUp,
+  onReload,
+  // New features
+  onGetSessionTree,
+  onCopyLastAssistant,
+  onGetQueuedMessages,
+  onClearQueue,
+  onListFiles,
+  onExecuteBash,
+  onToggleAllToolsCollapsed,
+  onToggleAllThinkingCollapsed,
+  onGetScopedModels,
+  onSetScopedModels,
 }: PaneManagerProps) {
   const totalPanes = countPanes(layout);
 
@@ -105,7 +129,7 @@ export function PaneManager({
         onFocus={() => onFocusPane(node.id)}
         onClose={() => onClosePane(node.id)}
         onSendPrompt={(msg, images) => onSendPrompt(node.slotId, msg, images)}
-        onSteer={(msg) => onSteer(node.slotId, msg)}
+        onSteer={(msg, images) => onSteer(node.slotId, msg, images)}
         onAbort={() => onAbort(node.slotId)}
         onLoadSession={(sessionId) => onLoadSession(node.slotId, sessionId)}
         onNewSession={() => onNewSession(node.slotId)}
@@ -120,6 +144,18 @@ export function PaneManager({
         onRenameSession={(name) => onRenameSession(node.slotId, name)}
         onShowHotkeys={onShowHotkeys}
         onFollowUp={(msg) => onFollowUp(node.slotId, msg)}
+        onReload={onReload}
+        // New features
+        onGetSessionTree={() => onGetSessionTree(node.slotId)}
+        onCopyLastAssistant={() => onCopyLastAssistant(node.slotId)}
+        onGetQueuedMessages={() => onGetQueuedMessages(node.slotId)}
+        onClearQueue={() => onClearQueue(node.slotId)}
+        onListFiles={(query) => onListFiles(node.slotId, query)}
+        onExecuteBash={(cmd, exclude) => onExecuteBash(node.slotId, cmd, exclude)}
+        onToggleAllToolsCollapsed={onToggleAllToolsCollapsed}
+        onToggleAllThinkingCollapsed={onToggleAllThinkingCollapsed}
+        onGetScopedModels={() => onGetScopedModels(node.slotId)}
+        onSetScopedModels={(models) => onSetScopedModels(node.slotId, models)}
       />
     );
   };

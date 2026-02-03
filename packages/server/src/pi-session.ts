@@ -24,8 +24,14 @@ import type {
   StartupResourceInfo,
   ThinkingLevel,
   TokenUsage,
+  SessionTreeNode,
+  ScopedModelInfo,
+  FileInfo,
+  ExtensionUIRequest,
+  ExtensionUIResponse,
 } from '@pi-web-ui/shared';
 import { getGitInfo } from './git-info.js';
+import { WebExtensionUIContext } from './web-extension-ui.js';
 
 export class PiSession extends EventEmitter {
   private session: AgentSession | null = null;
@@ -34,6 +40,9 @@ export class PiSession extends EventEmitter {
   private cwd: string;
   private messageMap = new Map<string, ChatMessage>();
   private unsubscribe: (() => void) | null = null;
+  private extensionUIContext: WebExtensionUIContext | null = null;
+  /** Stored editor text for extensions (since there's no real editor in web UI) */
+  private editorText = '';
 
   constructor(cwd: string) {
     super();
@@ -52,6 +61,30 @@ export class PiSession extends EventEmitter {
 
     this.session = session;
     this.unsubscribe = session.subscribe((event) => this.handleEvent(event));
+
+    // Create and bind the extension UI context
+    this.extensionUIContext = new WebExtensionUIContext({
+      sendRequest: (request: ExtensionUIRequest) => {
+        this.emit('extensionUIRequest', request);
+      },
+      sendNotification: (message: string, type: 'info' | 'warning' | 'error') => {
+        // Emit as a notification event (could be handled by client)
+        this.emit('extensionNotification', { message, type });
+      },
+      setEditorText: (text: string) => {
+        this.editorText = text;
+        this.emit('editorTextChange', text);
+      },
+      getEditorText: () => {
+        return this.editorText;
+      },
+    });
+
+    // Bind extensions with UI context
+    await session.bindExtensions({
+      uiContext: this.extensionUIContext,
+      // TODO: Could also bind commandContextActions for navigateTree, etc.
+    });
   }
 
   dispose(): void {
@@ -59,10 +92,30 @@ export class PiSession extends EventEmitter {
       this.unsubscribe();
       this.unsubscribe = null;
     }
+    if (this.extensionUIContext) {
+      this.extensionUIContext.cancelAllPending();
+      this.extensionUIContext = null;
+    }
     if (this.session) {
       this.session.dispose();
       this.session = null;
     }
+  }
+
+  /**
+   * Handle an extension UI response from the client.
+   */
+  handleExtensionUIResponse(response: ExtensionUIResponse): void {
+    if (this.extensionUIContext) {
+      this.extensionUIContext.handleResponse(response);
+    }
+  }
+
+  /**
+   * Set the editor text (for extensions that call ctx.ui.setEditorText)
+   */
+  setEditorTextFromClient(text: string): void {
+    this.editorText = text;
   }
 
   private handleEvent(event: AgentSessionEvent): void {
@@ -300,7 +353,7 @@ export class PiSession extends EventEmitter {
       } : null,
       thinkingLevel: this.session.thinkingLevel as ThinkingLevel,
       isStreaming: this.session.isStreaming,
-      isCompacting: false,
+      isCompacting: this.session.isCompacting,
       autoCompactionEnabled: this.session.autoCompactionEnabled,
       autoRetryEnabled: this.session.autoRetryEnabled,
       steeringMode: this.session.steeringMode,
@@ -335,11 +388,37 @@ export class PiSession extends EventEmitter {
     await this.session.prompt(message, { images: imageContents });
   }
 
-  async steer(message: string): Promise<void> {
+  async steer(message: string, images?: ImageAttachment[]): Promise<void> {
+    console.log(`[PiSession.steer] message: "${message?.substring(0, 50)}", hasImages: ${!!images && images.length > 0}`);
     if (!this.session) {
+      console.log(`[PiSession.steer] ERROR: Session not initialized`);
       throw new Error('Session not initialized');
     }
-    await this.session.steer(message);
+    
+    console.log(`[PiSession.steer] Session isStreaming: ${this.session.isStreaming}`);
+    
+    if (images && images.length > 0) {
+      // Use sendUserMessage with deliverAs: 'steer' when there are images
+      console.log(`[PiSession.steer] Using sendUserMessage with images`);
+      const imageContents: ImageContent[] = images.map((img) => ({
+        type: 'image' as const,
+        data: img.source.data,
+        mimeType: img.source.mediaType,
+      }));
+      
+      const content: (TextContent | ImageContent)[] = [
+        { type: 'text' as const, text: message },
+        ...imageContents,
+      ];
+      
+      await this.session.sendUserMessage(content, { deliverAs: 'steer' });
+      console.log(`[PiSession.steer] sendUserMessage completed`);
+    } else {
+      // Use simple steer() for text-only
+      console.log(`[PiSession.steer] Using simple steer()`);
+      await this.session.steer(message);
+      console.log(`[PiSession.steer] session.steer() completed`);
+    }
   }
 
   async followUp(message: string): Promise<void> {
@@ -614,12 +693,13 @@ export class PiSession extends EventEmitter {
 
   /**
    * Execute a bash command
+   * @param excludeFromContext If true, output won't be sent to LLM (!! prefix)
    */
-  async executeBash(command: string, onChunk?: (chunk: string) => void): Promise<BashResult> {
+  async executeBash(command: string, onChunk?: (chunk: string) => void, excludeFromContext = false): Promise<BashResult> {
     if (!this.session) {
       throw new Error('Session not initialized');
     }
-    const result = await this.session.executeBash(command, onChunk);
+    const result = await this.session.executeBash(command, onChunk, { excludeFromContext });
     return {
       stdout: result.output,
       stderr: '',  // Pi SDK combines stdout/stderr into output
@@ -748,5 +828,175 @@ export class PiSession extends EventEmitter {
       themes: themeInfos,
       shortcuts,
     };
+  }
+
+  // ============================================================================
+  // Session Tree Navigation
+  // ============================================================================
+
+  /**
+   * Get the session tree structure for navigation
+   */
+  getSessionTree(): { tree: SessionTreeNode[]; currentLeafId: string | null } {
+    if (!this.session) {
+      return { tree: [], currentLeafId: null };
+    }
+
+    const sessionManager = this.session.sessionManager;
+    const sdkTree = sessionManager.getTree();
+    const currentLeafId = sessionManager.getLeafId();
+
+    // Convert SDK tree to our format
+    const convertNode = (node: { entry: { id: string; parentId: string | null; type: string; timestamp: string; message?: { role?: string; content?: unknown } }; children: typeof sdkTree; label?: string }): SessionTreeNode => {
+      let role: 'user' | 'assistant' | 'toolResult' | undefined;
+      let text = '';
+
+      if (node.entry.type === 'message' && node.entry.message) {
+        const msg = node.entry.message;
+        role = msg.role as 'user' | 'assistant' | 'toolResult' | undefined;
+        // Extract text preview
+        const content = msg.content;
+        if (typeof content === 'string') {
+          text = content.slice(0, 100);
+        } else if (Array.isArray(content)) {
+          const textBlock = content.find((c: { type: string }) => c.type === 'text');
+          if (textBlock && 'text' in textBlock) {
+            text = (textBlock.text as string).slice(0, 100);
+          }
+        }
+      } else if (node.entry.type === 'compaction') {
+        text = '[Compaction]';
+      } else if (node.entry.type === 'branch_summary') {
+        text = '[Branch Summary]';
+      } else if (node.entry.type === 'model_change') {
+        text = '[Model Change]';
+      } else if (node.entry.type === 'thinking_level_change') {
+        text = '[Thinking Level Change]';
+      }
+
+      return {
+        id: node.entry.id,
+        parentId: node.entry.parentId,
+        type: node.entry.type === 'message' ? 'message' :
+              node.entry.type === 'compaction' ? 'compaction' :
+              node.entry.type === 'branch_summary' ? 'branch_summary' :
+              node.entry.type === 'model_change' ? 'model_change' :
+              node.entry.type === 'thinking_level_change' ? 'thinking_level_change' : 'other',
+        role,
+        text,
+        label: node.label,
+        timestamp: new Date(node.entry.timestamp).getTime(),
+        children: node.children.map(convertNode),
+      };
+    };
+
+    return {
+      tree: sdkTree.map(convertNode),
+      currentLeafId,
+    };
+  }
+
+  /**
+   * Navigate to a different point in the session tree
+   */
+  async navigateTree(targetId: string, summarize = false): Promise<{ success: boolean; editorText?: string; error?: string }> {
+    if (!this.session) {
+      return { success: false, error: 'Session not initialized' };
+    }
+
+    try {
+      const result = await this.session.navigateTree(targetId, { summarize });
+      return {
+        success: !result.cancelled && !result.aborted,
+        editorText: result.editorText,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Navigation failed',
+      };
+    }
+  }
+
+  // ============================================================================
+  // Queued Messages
+  // ============================================================================
+
+  /**
+   * Get pending queued messages
+   */
+  getQueuedMessages(): { steering: string[]; followUp: string[] } {
+    if (!this.session) {
+      return { steering: [], followUp: [] };
+    }
+    return {
+      steering: [...this.session.getSteeringMessages()],
+      followUp: [...this.session.getFollowUpMessages()],
+    };
+  }
+
+  /**
+   * Clear queued messages and return them
+   */
+  clearQueue(): { steering: string[]; followUp: string[] } {
+    if (!this.session) {
+      return { steering: [], followUp: [] };
+    }
+    return this.session.clearQueue();
+  }
+
+  // ============================================================================
+  // Scoped Models
+  // ============================================================================
+
+  /**
+   * Get scoped models (for Ctrl+P cycling)
+   */
+  async getScopedModels(): Promise<ScopedModelInfo[]> {
+    if (!this.session) {
+      return [];
+    }
+
+    const scopedModels = this.session.scopedModels;
+    const allModels = await this.modelRegistry.getAvailable();
+
+    // If scoped models are set, return them with enabled=true
+    if (scopedModels.length > 0) {
+      return scopedModels.map(sm => ({
+        provider: sm.model.provider,
+        modelId: sm.model.id,
+        modelName: sm.model.name,
+        thinkingLevel: sm.thinkingLevel as ThinkingLevel,
+        enabled: true,
+      }));
+    }
+
+    // Otherwise return all models with enabled=false (using session defaults)
+    return allModels.map(m => ({
+      provider: m.provider,
+      modelId: m.id,
+      modelName: m.name,
+      thinkingLevel: 'off' as ThinkingLevel,
+      enabled: false,
+    }));
+  }
+
+  /**
+   * Set scoped models for cycling
+   */
+  async setScopedModels(models: Array<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>): Promise<void> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+
+    const scopedModels = [];
+    for (const m of models) {
+      const model = this.modelRegistry.find(m.provider, m.modelId);
+      if (model) {
+        scopedModels.push({ model, thinkingLevel: m.thinkingLevel });
+      }
+    }
+
+    this.session.setScopedModels(scopedModels);
   }
 }
