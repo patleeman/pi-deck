@@ -2,7 +2,7 @@
 
 **Status**: 🔄 IN PROGRESS  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:30 EST
+**Last Updated**: 2026-02-02 22:32 EST
 
 ---
 
@@ -62,8 +62,8 @@ After every compaction or context reset:
 
 **Server:**
 - [x] `pi-session.test.ts` - Event patterns, state structures, behavior contracts (27 tests)
-- [ ] `session-orchestrator.test.ts` - Multi-slot management, event routing
-- [ ] `workspace-manager.test.ts` - Workspace lifecycle, persistence
+- [x] `session-orchestrator.test.ts` - Multi-slot management, event routing (14 tests)
+- [x] `workspace-manager.test.ts` - Workspace lifecycle, persistence (15 tests)
 - [x] `web-extension-ui.test.ts` - Request/response handling, timeouts (29 tests)
 
 ### Phase 3: Integration Tests (10 files)
@@ -154,4 +154,9 @@ After every compaction or context reset:
 - E2E tests cover: workspace, chat, tool-calls, bash, sessions, models, panes,
   keyboard, slash-commands, questionnaire, extension-ui, settings, mobile, error-recovery
 - Tests ready to run against development server
+
+### 2026-02-02 22:32 EST
+- 335 tests passing (250 client + 85 server)
+- Completed server tests: workspace-manager, session-orchestrator
+- All core component and behavior tests complete
 
