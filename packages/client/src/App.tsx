@@ -294,7 +294,7 @@ function App() {
         {/* Settings button */}
         <button
           onClick={openSettings}
-          className="p-3 sm:p-2 text-pi-muted hover:text-pi-text transition-colors"
+          className="p-3 sm:p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-pi-muted hover:text-pi-text transition-colors"
           title="Settings (⌘,)"
         >
           <SettingsIcon className="w-5 h-5 sm:w-4 sm:h-4" />

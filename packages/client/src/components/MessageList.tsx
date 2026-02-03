@@ -225,6 +225,15 @@ function ReadDisplay({ content, startLine = 1 }: { content: string; startLine?: 
   );
 }
 
+// Simple content display without line numbers (for write tool)
+function WriteDisplay({ content }: { content: string }) {
+  return (
+    <div className="text-[12px] font-mono text-pi-muted whitespace-pre-wrap">
+      {content}
+    </div>
+  );
+}
+
 // TUI-style tool call display - matches terminal UI exactly
 function ToolCallDisplay({ 
   tool,
@@ -251,7 +260,9 @@ function ToolCallDisplay({
   const toolName = tool.name.toLowerCase();
   const isEditTool = toolName === 'edit';
   const isReadTool = toolName === 'read';
+  const isWriteTool = toolName === 'write';
   const hasEditDiff = isEditTool && Boolean(args.oldText) && Boolean(args.newText);
+  const hasWriteContent = isWriteTool && Boolean(args.content);
   
   // Get start line for read display
   const readStartLine = isReadTool && args.offset ? Number(args.offset) : 1;
@@ -264,11 +275,18 @@ function ToolCallDisplay({
         onClick={() => setExpanded(!expanded)}
       >
         <span className="text-[#fff200] font-semibold flex-shrink-0">{prefix}</span>
-        <span className="text-pi-text whitespace-pre-wrap break-all flex-1">{detail}</span>
+        <span className="text-[#00d7ff] whitespace-pre-wrap break-all flex-1">{detail}</span>
         {tool.status === 'running' && (
           <span className="text-pi-warning text-[11px] flex-shrink-0 animate-pulse">(running)</span>
         )}
       </div>
+      
+      {/* Write tool content - plain text, no line numbers */}
+      {hasWriteContent && expanded && (
+        <div className="px-4 pb-3">
+          <WriteDisplay content={String(args.content)} />
+        </div>
+      )}
       
       {/* Edit diff display - from args */}
       {hasEditDiff && expanded && (
@@ -292,8 +310,8 @@ function ToolCallDisplay({
         </div>
       )}
       
-      {/* Other tool output - with line numbers, no scrollbar */}
-      {hasResult && !isReadTool && !hasEditDiff && expanded && (
+      {/* Other tool output - with line numbers, no scrollbar (but not for write tool) */}
+      {hasResult && !isReadTool && !isWriteTool && !hasEditDiff && expanded && (
         <div className={`px-4 pb-3 ${tool.isError ? 'text-pi-error' : ''}`}>
           <ReadDisplay content={outputInfo!.previewText} startLine={1} />
           {outputInfo!.hasMore && (
@@ -305,7 +323,7 @@ function ToolCallDisplay({
       )}
       
       {/* Collapsed indicator */}
-      {(hasEditDiff || hasResult) && !expanded && (
+      {(hasEditDiff || hasWriteContent || hasResult) && !expanded && (
         <div className="px-4 pb-2 text-[11px] text-pi-muted">
           (click to expand)
         </div>
