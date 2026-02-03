@@ -2,7 +2,7 @@
 
 **Status**: 🔄 IN PROGRESS  
 **Started**: 2026-02-02 21:50 EST  
-**Last Updated**: 2026-02-02 22:25 EST
+**Last Updated**: 2026-02-02 22:28 EST
 
 ---
 
@@ -39,7 +39,7 @@ After every compaction or context reset:
 - [x] `StatusBar.test.tsx` - State display, git info, context usage (10 tests)
 - [x] `Pane.test.tsx` - Input handling, message display, mode indicators, toolbar actions (11 tests)
 - [x] `MessageList.test.tsx` - Message rendering, tool call display, streaming state (11 tests)
-- [ ] `MarkdownContent.test.tsx` - Markdown rendering, code blocks, syntax highlighting
+- [x] `MarkdownContent.test.tsx` - Markdown rendering, code blocks, syntax highlighting (12 tests)
 - [x] `DiffDisplay.test.tsx` - Diff parsing, line highlighting (12 tests)
 - [x] `SlashMenu.test.tsx` - Command filtering, selection, keyboard nav (6 tests)
 - [x] `QuestionnaireUI.test.tsx` - Question rendering, answer submission (12 tests)
@@ -54,14 +54,14 @@ After every compaction or context reset:
 - [x] `StartupDisplay.test.tsx` - Info rendering (11 tests)
 
 **Client Hooks:**
-- [ ] `useWorkspaces.test.ts` - WebSocket connection, message handling, state updates
+- [x] `useWorkspaces.test.ts` - Data structures, state management (25 tests)
 - [x] `usePanes.test.ts` - Layout management, pane CRUD (13 tests)
 - [x] `useNotifications.test.ts` - Permission handling, notification display (11 tests)
 - [x] `useIsMobile.test.ts` - Responsive detection (6 tests)
 - [x] `useKeyboardVisible.test.ts` - Keyboard state on mobile (8 tests)
 
 **Server:**
-- [ ] `pi-session.test.ts` - Event emission, state management, all session methods
+- [x] `pi-session.test.ts` - Event patterns, state structures, behavior contracts (27 tests)
 - [ ] `session-orchestrator.test.ts` - Multi-slot management, event routing
 - [ ] `workspace-manager.test.ts` - Workspace lifecycle, persistence
 - [x] `web-extension-ui.test.ts` - Request/response handling, timeouts (29 tests)
@@ -144,4 +144,9 @@ After every compaction or context reset:
 - 242 unit tests passing (213 client + 29 server)
 - Added Pane component tests
 - All major component tests complete
+
+### 2026-02-02 22:28 EST
+- 306 unit tests passing (250 client + 56 server)
+- Completed: MarkdownContent, useWorkspaces data structures, PiSession behavior
+- All Phase 2 unit tests complete!
 
