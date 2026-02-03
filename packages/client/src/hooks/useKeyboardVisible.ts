@@ -5,6 +5,11 @@ import { useState, useEffect } from 'react';
  * Uses the Visual Viewport API to detect viewport height changes.
  * Also sets --viewport-height CSS variable for proper mobile viewport handling.
  * Returns true when the keyboard is likely visible.
+ * 
+ * On iOS Safari, when the keyboard opens:
+ * 1. The browser scrolls the page up rather than resizing the viewport
+ * 2. visualViewport.height reflects the actual visible area
+ * 3. We need to set both the height AND offset to position content correctly
  */
 export function useKeyboardVisible(): boolean {
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -12,10 +17,17 @@ export function useKeyboardVisible(): boolean {
   useEffect(() => {
     const viewport = window.visualViewport;
     
-    // Set the CSS variable for viewport height
+    // Set the CSS variables for viewport height and offset
     const updateViewportHeight = () => {
-      const height = viewport?.height ?? window.innerHeight;
-      document.documentElement.style.setProperty('--viewport-height', `${height}px`);
+      if (viewport) {
+        // Use visualViewport for accurate height on mobile
+        document.documentElement.style.setProperty('--viewport-height', `${viewport.height}px`);
+        // The offset tells us how much the viewport has been scrolled/pushed up by the keyboard
+        document.documentElement.style.setProperty('--viewport-offset', `${viewport.offsetTop}px`);
+      } else {
+        document.documentElement.style.setProperty('--viewport-height', `${window.innerHeight}px`);
+        document.documentElement.style.setProperty('--viewport-offset', '0px');
+      }
     };
 
     // Initial setup - always set the height
@@ -34,7 +46,7 @@ export function useKeyboardVisible(): boolean {
     let orientationTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const handleViewportChange = () => {
-      // Update CSS variable for actual viewport height
+      // Update CSS variables for actual viewport height and offset
       updateViewportHeight();
 
       // If viewport height decreased significantly (>150px), keyboard is likely open

@@ -5,6 +5,7 @@ import { useKeyboardVisible } from '../../../src/hooks/useKeyboardVisible';
 describe('useKeyboardVisible', () => {
   let mockVisualViewport: {
     height: number;
+    offsetTop: number;
     addEventListener: ReturnType<typeof vi.fn>;
     removeEventListener: ReturnType<typeof vi.fn>;
   };
@@ -12,6 +13,7 @@ describe('useKeyboardVisible', () => {
   beforeEach(() => {
     mockVisualViewport = {
       height: 800,
+      offsetTop: 0,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     };
@@ -124,5 +126,35 @@ describe('useKeyboardVisible', () => {
     
     const viewportHeight = document.documentElement.style.getPropertyValue('--viewport-height');
     expect(viewportHeight).toBe('600px');
+  });
+
+  it('sets --viewport-offset CSS variable for iOS keyboard handling', () => {
+    mockVisualViewport.offsetTop = 100;
+    renderHook(() => useKeyboardVisible());
+    
+    const viewportOffset = document.documentElement.style.getPropertyValue('--viewport-offset');
+    expect(viewportOffset).toBe('100px');
+  });
+
+  it('updates viewport offset when keyboard opens (iOS Safari behavior)', () => {
+    renderHook(() => useKeyboardVisible());
+    
+    // Simulate iOS Safari behavior: keyboard opens, viewport scrolls up
+    mockVisualViewport.height = 400; // Significantly reduced
+    mockVisualViewport.offsetTop = 200; // Viewport pushed down
+    
+    const resizeHandler = mockVisualViewport.addEventListener.mock.calls.find(
+      call => call[0] === 'resize'
+    )?.[1];
+    
+    if (resizeHandler) {
+      act(() => {
+        resizeHandler();
+      });
+    }
+    
+    // Both CSS variables should be updated
+    expect(document.documentElement.style.getPropertyValue('--viewport-height')).toBe('400px');
+    expect(document.documentElement.style.getPropertyValue('--viewport-offset')).toBe('200px');
   });
 });

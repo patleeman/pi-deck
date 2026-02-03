@@ -285,9 +285,19 @@ function App() {
   // Get backend commands from focused slot
   const backendCommands = focusedSlot?.commands || [];
 
+  // On mobile, when keyboard is visible, we need to use fixed positioning
+  // to properly contain the app within the visual viewport
+  const appContainerClasses = isMobile && isKeyboardVisible
+    ? "fixed inset-0 bg-pi-bg flex flex-col font-mono"
+    : "h-full bg-pi-bg flex flex-col font-mono";
+
   return (
     <div
-      className="h-full bg-pi-bg flex flex-col font-mono"
+      className={appContainerClasses}
+      style={isMobile && isKeyboardVisible ? { 
+        height: 'var(--viewport-height, 100%)',
+        top: 'var(--viewport-offset, 0)',
+      } : undefined}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
