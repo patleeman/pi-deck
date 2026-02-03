@@ -11,11 +11,6 @@ interface ExtensionUIDialogProps {
  * Used by extension commands like /review that need user interaction.
  */
 export function ExtensionUIDialog({ request, onResponse }: ExtensionUIDialogProps) {
-  // Don't render for notify requests (they're handled elsewhere)
-  if (request.method === 'notify') {
-    return null;
-  }
-
   const requestId = request.requestId;
 
   const handleCancel = useCallback(() => {
@@ -25,6 +20,11 @@ export function ExtensionUIDialog({ request, onResponse }: ExtensionUIDialogProp
   const handleSubmit = useCallback((value: string | boolean) => {
     onResponse({ requestId, cancelled: false, value });
   }, [requestId, onResponse]);
+
+  // Don't render for notify requests (they're handled elsewhere)
+  if (request.method === 'notify') {
+    return null;
+  }
 
   // Render appropriate dialog based on method
   switch (request.method) {

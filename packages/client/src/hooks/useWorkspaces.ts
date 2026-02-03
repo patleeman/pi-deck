@@ -516,7 +516,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
               const slot = ws.slots[slotId];
               if (!slot) return ws;
               
-              let updates: Partial<SessionSlotState> = {};
+              const updates: Partial<SessionSlotState> = {};
               if (event.update.type === 'textDelta' && event.update.delta) {
                 updates.streamingText = slot.streamingText + event.update.delta;
               } else if (event.update.type === 'thinkingDelta' && event.update.delta) {
