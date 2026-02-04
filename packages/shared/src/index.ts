@@ -1043,7 +1043,7 @@ export interface SessionInfo {
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'toolResult';
+  role: 'user' | 'assistant' | 'toolResult' | 'bashExecution';
   timestamp: number;
   content: MessageContent[];
   // For assistant messages
@@ -1054,6 +1054,14 @@ export interface ChatMessage {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  // For bash execution messages
+  command?: string;
+  output?: string;
+  exitCode?: number | null;
+  cancelled?: boolean;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  excludeFromContext?: boolean;
 }
 
 export type MessageContent =

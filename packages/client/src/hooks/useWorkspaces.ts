@@ -25,6 +25,7 @@ interface ToolExecution {
 
 /** State for a bash execution */
 export interface BashExecution {
+  messageId: string;
   command: string;
   output: string;
   isRunning: boolean;
@@ -860,14 +861,87 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
         // Bash execution events (! and !! commands)
         case 'bashStart': {
           const slotId = event.sessionSlotId || 'default';
-          updateSlot(event.workspaceId, slotId, {
-            bashExecution: {
-              command: event.command,
-              output: '',
-              isRunning: true,
-              excludeFromContext: event.excludeFromContext ?? false,
-            },
-          });
+          setWorkspaces((prev) =>
+            prev.map((ws) => {
+              if (ws.id !== event.workspaceId) return ws;
+              const slot = ws.slots[slotId] || createEmptySlot(slotId);
+              const exclude = event.excludeFromContext ?? false;
+              let messageId = slot.bashExecution?.messageId;
+              let messages = slot.messages;
+              let output = '';
+
+              if (messageId) {
+                const existingIndex = messages.findIndex((msg) => msg.id === messageId);
+                if (existingIndex >= 0) {
+                  const existing = messages[existingIndex];
+                  output = typeof existing.output === 'string' ? existing.output : '';
+                  const updatedMessage: ChatMessage = {
+                    ...existing,
+                    role: 'bashExecution',
+                    command: event.command,
+                    output,
+                    exitCode: null,
+                    cancelled: false,
+                    truncated: false,
+                    excludeFromContext: exclude,
+                    isError: false,
+                  };
+                  messages = [...messages];
+                  messages[existingIndex] = updatedMessage;
+                } else {
+                  output = '';
+                  const bashMessage: ChatMessage = {
+                    id: messageId,
+                    role: 'bashExecution',
+                    timestamp: Date.now(),
+                    content: [],
+                    command: event.command,
+                    output,
+                    exitCode: null,
+                    cancelled: false,
+                    truncated: false,
+                    excludeFromContext: exclude,
+                    isError: false,
+                  };
+                  messages = [...messages, bashMessage];
+                }
+              } else {
+                messageId = `bash-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                const bashMessage: ChatMessage = {
+                  id: messageId,
+                  role: 'bashExecution',
+                  timestamp: Date.now(),
+                  content: [],
+                  command: event.command,
+                  output: '',
+                  exitCode: null,
+                  cancelled: false,
+                  truncated: false,
+                  excludeFromContext: exclude,
+                  isError: false,
+                };
+                messages = [...messages, bashMessage];
+              }
+
+              return {
+                ...ws,
+                slots: {
+                  ...ws.slots,
+                  [slotId]: {
+                    ...slot,
+                    messages,
+                    bashExecution: {
+                      messageId,
+                      command: event.command,
+                      output,
+                      isRunning: true,
+                      excludeFromContext: exclude,
+                    },
+                  },
+                },
+              };
+            })
+          );
           break;
         }
 
@@ -878,12 +952,21 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
               if (ws.id !== event.workspaceId) return ws;
               const slot = ws.slots[slotId];
               if (!slot || !slot.bashExecution) return ws;
+              const messageId = slot.bashExecution.messageId;
+
+              const messages: ChatMessage[] = slot.messages.map((msg) => {
+                if (msg.id !== messageId) return msg;
+                const currentOutput = typeof msg.output === 'string' ? msg.output : '';
+                return { ...msg, output: currentOutput + event.chunk } as ChatMessage;
+              });
+
               return {
                 ...ws,
                 slots: {
                   ...ws.slots,
                   [slotId]: {
                     ...slot,
+                    messages,
                     bashExecution: {
                       ...slot.bashExecution,
                       output: slot.bashExecution.output + event.chunk,
@@ -903,19 +986,56 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
               if (ws.id !== event.workspaceId) return ws;
               const slot = ws.slots[slotId];
               if (!slot || !slot.bashExecution) return ws;
+
+              const bashExecution = slot.bashExecution;
+              const output = bashExecution.output.length > 0
+                ? bashExecution.output
+                : [event.result.stdout, event.result.stderr].filter(Boolean).join('');
+              const exitCode = event.result.exitCode;
+              const isError = (exitCode !== null && exitCode !== 0) || Boolean(event.result.stderr);
+              const cancelled = event.result.signal !== null || event.result.timedOut;
+              const messageId = bashExecution.messageId;
+
+              let messages: ChatMessage[] = slot.messages.map((msg) => {
+                if (msg.id !== messageId) return msg;
+                return {
+                  ...msg,
+                  role: 'bashExecution' as const,
+                  command: bashExecution.command,
+                  output,
+                  exitCode,
+                  cancelled,
+                  truncated: event.result.truncated,
+                  excludeFromContext: bashExecution.excludeFromContext,
+                  isError,
+                } as ChatMessage;
+              });
+
+              if (!messages.some((msg) => msg.id === messageId)) {
+                const bashMessage: ChatMessage = {
+                  id: messageId,
+                  role: 'bashExecution',
+                  timestamp: Date.now(),
+                  content: [],
+                  command: bashExecution.command,
+                  output,
+                  exitCode,
+                  cancelled,
+                  truncated: event.result.truncated,
+                  excludeFromContext: bashExecution.excludeFromContext,
+                  isError,
+                };
+                messages = [...messages, bashMessage];
+              }
+
               return {
                 ...ws,
                 slots: {
                   ...ws.slots,
                   [slotId]: {
                     ...slot,
-                    bashExecution: {
-                      ...slot.bashExecution,
-                      // Don't append stdout/stderr here - they were already streamed via bashOutput events
-                      isRunning: false,
-                      exitCode: event.result.exitCode,
-                      isError: (event.result.exitCode !== 0) || Boolean(event.result.stderr),
-                    },
+                    messages,
+                    bashExecution: null,
                   },
                 },
               };
@@ -958,6 +1078,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       setIsConnected(true);
       setIsConnecting(false);
       setError(null);
+      setDeployState({ status: 'idle', message: null });
     };
 
     ws.onclose = () => {
@@ -1260,8 +1381,48 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     // Bash execution
     executeBash: (slotId: string, command: string, excludeFromContext?: boolean) =>
       withActiveWorkspace((workspaceId) => {
+        const exclude = excludeFromContext ?? false;
+        const messageId = `bash-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const timestamp = Date.now();
+        const bashMessage: ChatMessage = {
+          id: messageId,
+          role: 'bashExecution',
+          timestamp,
+          content: [],
+          command,
+          output: '',
+          exitCode: null,
+          cancelled: false,
+          truncated: false,
+          excludeFromContext: exclude,
+          isError: false,
+        };
+
+        setWorkspaces((prev) =>
+          prev.map((ws) => {
+            if (ws.id !== workspaceId) return ws;
+            const slot = ws.slots[slotId] || createEmptySlot(slotId);
+            return {
+              ...ws,
+              slots: {
+                ...ws.slots,
+                [slotId]: {
+                  ...slot,
+                  messages: [...slot.messages, bashMessage],
+                  bashExecution: {
+                    messageId,
+                    command,
+                    output: '',
+                    isRunning: true,
+                    excludeFromContext: exclude,
+                  },
+                },
+              },
+            };
+          })
+        );
         // Pi SDK handles the context inclusion - just pass the flag
-        send({ type: 'bash', workspaceId, sessionSlotId: slotId, command, excludeFromContext });
+        send({ type: 'bash', workspaceId, sessionSlotId: slotId, command, excludeFromContext: exclude });
       }),
   };
 }

@@ -132,6 +132,7 @@ describe('useWorkspaces data structures', () => {
   describe('BashExecution', () => {
     it('tracks command and output', () => {
       const bash: BashExecution = {
+        messageId: 'bash-1',
         command: 'ls -la',
         output: 'total 8\ndrwxr-xr-x 2 user user 4096 Jan 1 12:00 .\n',
         isRunning: false,
@@ -146,6 +147,7 @@ describe('useWorkspaces data structures', () => {
 
     it('tracks running state', () => {
       const bash: BashExecution = {
+        messageId: 'bash-2',
         command: 'npm install',
         output: 'Installing dependencies...',
         isRunning: true,
@@ -157,6 +159,7 @@ describe('useWorkspaces data structures', () => {
 
     it('tracks error state', () => {
       const bash: BashExecution = {
+        messageId: 'bash-3',
         command: 'invalid-command',
         output: 'command not found: invalid-command',
         isRunning: false,
@@ -170,6 +173,7 @@ describe('useWorkspaces data structures', () => {
 
     it('can exclude from context', () => {
       const bash: BashExecution = {
+        messageId: 'bash-4',
         command: '!! ls -la',
         output: 'file1\nfile2',
         isRunning: false,

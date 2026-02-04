@@ -182,7 +182,7 @@ export function Pane({
   const state = slot?.state;
   const activeToolExecutions = slot?.activeToolExecutions || [];
   const questionnaireRequest = state?.questionnaireRequest;
-  const bashExecution = slot?.bashExecution;
+  const bashExecution = slot?.bashExecution ?? null;
 
   // Track session ID to reset scroll when workspace/session changes
   const sessionId = state?.sessionId;
@@ -561,6 +561,25 @@ export function Pane({
   // Handle send button click
   const handleSend = useCallback(() => {
     if (!inputValue.trim() && attachedImages.length === 0) return;
+
+    const trimmedMessage = inputValue.trim();
+    if (trimmedMessage.startsWith('!!')) {
+      const command = trimmedMessage.slice(2).trim();
+      if (command) {
+        onExecuteBash(command, true);
+      }
+      setInputValue('');
+      return;
+    }
+
+    if (trimmedMessage.startsWith('!') && !trimmedMessage.startsWith('!!')) {
+      const command = trimmedMessage.slice(1).trim();
+      if (command) {
+        onExecuteBash(command, false);
+      }
+      setInputValue('');
+      return;
+    }
     
     // Reset scroll tracking - user sent a message, so resume auto-scroll
     userScrolledUpRef.current = false;
@@ -569,10 +588,9 @@ export function Pane({
     const effectiveMode = altHeld ? 'followUp' : streamingInputMode;
     
     console.log(`[Pane.handleSend] isStreaming: ${isStreaming}, effectiveMode: ${effectiveMode}, streamingInputMode: ${streamingInputMode}, altHeld: ${altHeld}`);
-    console.log(`[Pane.handleSend] message: "${inputValue.trim().substring(0, 50)}"`);
+    console.log(`[Pane.handleSend] message: "${trimmedMessage.substring(0, 50)}"`);
     
     if (isStreaming) {
-      const trimmedMessage = inputValue.trim();
       if (effectiveMode === 'steer') {
         console.log(`[Pane.handleSend] Calling onSteer (immediate)`);
         // Steer messages are sent immediately to interrupt/guide the agent
@@ -584,7 +602,7 @@ export function Pane({
       }
     } else {
       console.log(`[Pane.handleSend] Calling onSendPrompt (not streaming)`);
-      onSendPrompt(inputValue.trim(), attachedImages.length > 0 ? attachedImages : undefined);
+      onSendPrompt(trimmedMessage, attachedImages.length > 0 ? attachedImages : undefined);
     }
     // Clear images after sending
     imagePreviews.forEach(url => URL.revokeObjectURL(url));
@@ -594,7 +612,7 @@ export function Pane({
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
-  }, [inputValue, attachedImages, imagePreviews, isStreaming, streamingInputMode, altHeld, onSteer, onFollowUp, onSendPrompt]);
+  }, [inputValue, attachedImages, imagePreviews, isStreaming, streamingInputMode, altHeld, onSteer, onFollowUp, onSendPrompt, onExecuteBash]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -1152,7 +1170,7 @@ export function Pane({
         className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-5 relative"
       >
         {/* Startup overlay - shown when no messages and user hasn't started typing */}
-        {messages.length === 0 && !inputValue.trim() && startupInfo && (
+        {messages.length === 0 && !inputValue.trim() && startupInfo && !bashExecution && (
           <div className="absolute inset-0 p-3 bg-pi-surface z-10 transition-opacity duration-200">
             <StartupDisplay startupInfo={startupInfo} />
           </div>
@@ -1166,32 +1184,6 @@ export function Pane({
           isStreaming={isStreaming}
           activeToolExecutions={activeToolExecutions}
         />
-        {/* Bash execution display (! and !! commands) */}
-        {bashExecution && (
-          <div className="font-mono text-[13px] -mx-3 bg-pi-surface border-l-2 border-pi-warning">
-            <div className="px-4 py-2 flex items-start gap-2">
-              <span className="text-pi-warning font-semibold flex-shrink-0">$</span>
-              <span className="text-pi-text whitespace-pre-wrap break-all flex-1">{bashExecution.command}</span>
-              {bashExecution.isRunning && (
-                <span className="text-pi-warning text-[11px] flex-shrink-0 animate-pulse">(running)</span>
-              )}
-              {bashExecution.excludeFromContext && !bashExecution.isRunning && (
-                <span className="text-pi-muted text-[11px] flex-shrink-0">(not sent to LLM)</span>
-              )}
-            </div>
-            {bashExecution.output && (
-              <div className={`px-4 pb-3 text-[12px] whitespace-pre-wrap break-all ${bashExecution.isError ? 'text-pi-error' : 'text-pi-muted'}`}>
-                {bashExecution.output}
-                {bashExecution.isRunning && <span className="text-pi-warning animate-pulse">▌</span>}
-              </div>
-            )}
-            {!bashExecution.isRunning && bashExecution.exitCode !== undefined && bashExecution.exitCode !== 0 && (
-              <div className="px-4 pb-2 text-[11px] text-pi-error">
-                exit code: {bashExecution.exitCode}
-              </div>
-            )}
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 

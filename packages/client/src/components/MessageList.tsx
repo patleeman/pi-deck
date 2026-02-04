@@ -26,6 +26,15 @@ interface ToolExecution {
   isError?: boolean;
 }
 
+interface BashExecution {
+  command: string;
+  output: string;
+  isRunning: boolean;
+  exitCode?: number | null;
+  isError?: boolean;
+  excludeFromContext: boolean;
+}
+
 // Extract text from message content
 function getTextContent(content: MessageContent[]): string {
   return content
@@ -326,6 +335,34 @@ function ToolCallDisplay({
   );
 }
 
+function BashExecutionDisplay({ execution }: { execution: BashExecution }) {
+  return (
+    <div className="font-mono text-[13px] -mx-4 bg-pi-surface border-l-2 border-pi-warning">
+      <div className="px-4 py-2 flex items-start gap-2">
+        <span className="text-pi-warning font-semibold flex-shrink-0">$</span>
+        <span className="text-pi-text whitespace-pre-wrap break-all flex-1">{execution.command}</span>
+        {execution.isRunning && (
+          <span className="text-pi-warning text-[11px] flex-shrink-0 animate-pulse">(running)</span>
+        )}
+        {execution.excludeFromContext && !execution.isRunning && (
+          <span className="text-pi-muted text-[11px] flex-shrink-0">(not sent to LLM)</span>
+        )}
+      </div>
+      {execution.output && (
+        <div className={`px-4 pb-3 text-[12px] whitespace-pre-wrap break-all ${execution.isError ? 'text-pi-error' : 'text-pi-muted'}`}>
+          {execution.output}
+          {execution.isRunning && <span className="text-pi-warning animate-pulse">▌</span>}
+        </div>
+      )}
+      {!execution.isRunning && execution.exitCode !== undefined && execution.exitCode !== null && execution.exitCode !== 0 && (
+        <div className="px-4 pb-2 text-[11px] text-pi-error">
+          exit code: {execution.exitCode}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // User message display - distinct background like TUI (full-width, cyan/teal tinted)
 function UserMessage({ text }: { text: string }) {
   return (
@@ -378,6 +415,26 @@ export function MessageList({
         if (msg.role === 'user') {
           const text = getTextContent(msg.content);
           return <UserMessage key={msgKey} text={text} />;
+        }
+
+        if (msg.role === 'bashExecution') {
+          const exitCode = msg.exitCode ?? null;
+          const cancelled = msg.cancelled === true;
+          const isRunning = msg.exitCode === null && !cancelled;
+          const isError = msg.isError ?? ((exitCode !== null && exitCode !== 0) || cancelled);
+          return (
+            <BashExecutionDisplay
+              key={msgKey}
+              execution={{
+                command: msg.command || '',
+                output: msg.output || '',
+                isRunning,
+                exitCode,
+                isError,
+                excludeFromContext: msg.excludeFromContext || false,
+              }}
+            />
+          );
         }
 
         if (msg.role === 'assistant') {

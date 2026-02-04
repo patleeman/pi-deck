@@ -77,7 +77,7 @@ describe('useWorkspaces event handling', () => {
         activeToolExecutions: [
           { toolCallId: 'old-tool', toolName: 'read', status: 'running' }
         ],
-        bashExecution: { command: 'ls', output: 'old', isRunning: true },
+        bashExecution: { messageId: 'bash-1', command: 'ls', output: 'old', isRunning: true, excludeFromContext: false },
       };
       
       // Messages event should clear tool state to avoid showing stale tools

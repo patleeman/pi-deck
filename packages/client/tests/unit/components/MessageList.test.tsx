@@ -141,6 +141,29 @@ describe('MessageList', () => {
     expect(container).toBeTruthy();
   });
 
+  it('renders bash execution messages inline', () => {
+    const bashMessage: ChatMessage = {
+      id: 'bash-1',
+      role: 'bashExecution',
+      timestamp: Date.now(),
+      content: [],
+      command: 'ls -la',
+      output: 'file1\nfile2\n',
+      exitCode: 0,
+      excludeFromContext: false,
+      isError: false,
+    };
+
+    render(
+      <MessageList
+        {...defaultProps}
+        messages={[bashMessage]}
+      />
+    );
+    expect(screen.getByText('ls -la')).toBeInTheDocument();
+    expect(screen.getByText('file1')).toBeInTheDocument();
+  });
+
   it('renders markdown in assistant messages', async () => {
     const markdownMessage: ChatMessage = {
       id: 'msg-md',

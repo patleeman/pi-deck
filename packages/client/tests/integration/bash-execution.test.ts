@@ -98,6 +98,23 @@ describe('Bash Execution Integration', () => {
       expect(bashMsg?.command).toBe('ls -la');
     });
 
+    it('sets bash execution immediately for feedback', async () => {
+      const { result } = await setupWorkspace();
+
+      await act(async () => {
+        result.current.executeBash('default', 'ls -la');
+        await vi.advanceTimersByTimeAsync(10);
+      });
+
+      const slot = result.current.workspaces[0].slots['default'];
+      expect(slot.bashExecution?.command).toBe('ls -la');
+      expect(slot.bashExecution?.isRunning).toBe(true);
+      expect(slot.bashExecution?.excludeFromContext).toBe(false);
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.command).toBe('ls -la');
+      expect(bashMessage?.exitCode).toBeNull();
+    });
+
     it('sends bash message with excludeFromContext flag', async () => {
       const { result } = await setupWorkspace();
       ws!.clearSentMessages();
@@ -133,6 +150,9 @@ describe('Bash Execution Integration', () => {
       expect(slot.bashExecution?.command).toBe('npm test');
       expect(slot.bashExecution?.isRunning).toBe(true);
       expect(slot.bashExecution?.output).toBe('');
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.command).toBe('npm test');
+      expect(bashMessage?.exitCode).toBeNull();
     });
 
     it('sets excludeFromContext flag', async () => {
@@ -183,6 +203,8 @@ describe('Bash Execution Integration', () => {
 
       const slot = result.current.workspaces[0].slots['default'];
       expect(slot.bashExecution?.output).toBe('hello\n');
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.output).toBe('hello\n');
     });
 
     it('accumulates multiple output chunks', async () => {
@@ -219,6 +241,8 @@ describe('Bash Execution Integration', () => {
 
       const slot = result.current.workspaces[0].slots['default'];
       expect(slot.bashExecution?.output).toBe('Running tests...\nTest 1 passed\nTest 2 passed\n');
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.output).toBe('Running tests...\nTest 1 passed\nTest 2 passed\n');
     });
   });
 
@@ -257,9 +281,11 @@ describe('Bash Execution Integration', () => {
       });
 
       const slot = result.current.workspaces[0].slots['default'];
-      expect(slot.bashExecution?.isRunning).toBe(false);
-      expect(slot.bashExecution?.exitCode).toBe(0);
-      expect(slot.bashExecution?.isError).toBe(false);
+      expect(slot.bashExecution).toBeNull();
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.command).toBe('echo hello');
+      expect(bashMessage?.exitCode).toBe(0);
+      expect(bashMessage?.isError).toBe(false);
     });
 
     it('receives bashEnd event with non-zero exit code (error)', async () => {
@@ -290,9 +316,41 @@ describe('Bash Execution Integration', () => {
       });
 
       const slot = result.current.workspaces[0].slots['default'];
-      expect(slot.bashExecution?.isRunning).toBe(false);
-      expect(slot.bashExecution?.exitCode).toBe(1);
-      expect(slot.bashExecution?.isError).toBe(true);
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.exitCode).toBe(1);
+      expect(bashMessage?.isError).toBe(true);
+    });
+
+    it('falls back to stdout/stderr when no bashOutput chunks arrive', async () => {
+      const { result } = await setupWorkspace();
+
+      await act(async () => {
+        ws!.simulateMessage({
+          type: 'bashStart',
+          workspaceId: 'ws-1',
+          sessionSlotId: 'default',
+          command: 'echo hello',
+          excludeFromContext: false,
+        });
+        ws!.simulateMessage({
+          type: 'bashEnd',
+          workspaceId: 'ws-1',
+          sessionSlotId: 'default',
+          result: {
+            stdout: 'hello\n',
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            truncated: false,
+          },
+        });
+        await vi.advanceTimersByTimeAsync(10);
+      });
+
+      const slot = result.current.workspaces[0].slots['default'];
+      const bashMessage = slot.messages.find(m => m.role === 'bashExecution');
+      expect(bashMessage?.output).toBe('hello\n');
     });
   });
 

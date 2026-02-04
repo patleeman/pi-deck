@@ -273,6 +273,24 @@ export class PiSession extends EventEmitter {
       };
     }
 
+    if (msg.role === 'bashExecution') {
+      const exitCode = msg.exitCode ?? null;
+      return {
+        id,
+        role: 'bashExecution',
+        timestamp,
+        content: [],
+        command: msg.command,
+        output: msg.output || '',
+        exitCode,
+        cancelled: msg.cancelled || false,
+        truncated: msg.truncated || false,
+        fullOutputPath: msg.fullOutputPath,
+        excludeFromContext: msg.excludeFromContext || false,
+        isError: (exitCode !== null && exitCode !== 0) || Boolean(msg.cancelled),
+      };
+    }
+
     // Assistant message
     return {
       id,
