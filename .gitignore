@@ -18,6 +18,7 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+.pi-web-ui.pid
 
 # Environment
 .env

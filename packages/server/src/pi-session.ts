@@ -353,8 +353,9 @@ export class PiSession extends EventEmitter {
       throw new Error('Session not initialized');
     }
 
-    const model = this.session.model;
-    const messages = this.session.messages;
+    const session = this.session;
+    const model = session.model;
+    const messages = session.messages;
 
     // Calculate token usage from messages
     const tokens: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
@@ -372,15 +373,15 @@ export class PiSession extends EventEmitter {
     tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
 
     // Get context window usage from Pi SDK
-    const contextUsage = this.session.getContextUsage();
+    const contextUsage = session.getContextUsage();
     const contextWindowPercent = contextUsage?.percent ?? 0;
 
     // Get git info for this workspace
     const git = getGitInfo(this.cwd);
 
     return {
-      sessionId: this.session.sessionId,
-      sessionFile: this.session.sessionFile,
+      sessionId: session.sessionId,
+      sessionFile: session.sessionFile,
       model: model ? {
         id: model.id,
         name: model.name,
@@ -388,13 +389,13 @@ export class PiSession extends EventEmitter {
         reasoning: model.reasoning || false,
         contextWindow: model.contextWindow || 0,
       } : null,
-      thinkingLevel: this.session.thinkingLevel as ThinkingLevel,
-      isStreaming: this.session.isStreaming,
-      isCompacting: this.session.isCompacting,
-      autoCompactionEnabled: this.session.autoCompactionEnabled,
-      autoRetryEnabled: this.session.autoRetryEnabled,
-      steeringMode: this.session.steeringMode,
-      followUpMode: this.session.followUpMode,
+      thinkingLevel: session.thinkingLevel as ThinkingLevel,
+      isStreaming: session.isStreaming,
+      isCompacting: session.isCompacting,
+      autoCompactionEnabled: session.autoCompactionEnabled,
+      autoRetryEnabled: session.autoRetryEnabled,
+      steeringMode: session.steeringMode,
+      followUpMode: session.followUpMode,
       messageCount: messages.length,
       tokens,
       contextWindowPercent,

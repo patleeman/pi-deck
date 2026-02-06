@@ -1,8 +1,8 @@
 import { lazy, Suspense, useState, useMemo, memo } from 'react';
 import type { ChatMessage, MessageContent } from '@pi-web-ui/shared';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useSettings } from '../contexts/SettingsContext';
 import { DiffDisplay } from './DiffDisplay';
-
 
 
 // Lazy load markdown for code splitting
@@ -386,6 +386,7 @@ export function MessageList({
   activeToolExecutions,
 }: MessageListProps) {
   const isMobile = useIsMobile();
+  const { settings } = useSettings();
   // On mobile, show only 3 lines of tool output; on desktop, show 5
   const previewLines = isMobile ? 3 : 5;
 
@@ -460,7 +461,7 @@ export function MessageList({
           return (
             <div key={msgKey} className="flex flex-col gap-4">
               {/* Thinking blocks */}
-              {thinkingBlocks.map((thinking, idx) => (
+              {!settings.autoCollapseThinking && thinkingBlocks.map((thinking, idx) => (
                 <ThinkingBlockMemo
                   key={`${msgKey}-thinking-${idx}`}
                   thinking={thinking}
@@ -516,7 +517,7 @@ export function MessageList({
       {isStreaming && (streamingText || streamingThinking) && (
         <div className="flex flex-col gap-4">
           {/* Streaming thinking */}
-          {streamingThinking && (
+          {!settings.autoCollapseThinking && streamingThinking && (
             <ThinkingBlockMemo
               thinking={streamingThinking}
               isStreaming={true}

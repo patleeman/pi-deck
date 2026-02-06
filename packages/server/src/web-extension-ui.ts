@@ -99,6 +99,9 @@ export class WebExtensionUIContext implements ExtensionUIContext {
   /** Status text values (stored locally, not sent to client yet) */
   private statusValues = new Map<string, string>();
 
+  /** Tool output expansion state */
+  private toolsExpanded = true;
+
   constructor(options: WebExtensionUIContextOptions) {
     this.sendRequest = options.sendRequest;
     this.sendNotification = options.sendNotification;
@@ -471,5 +474,13 @@ export class WebExtensionUIContext implements ExtensionUIContext {
 
   setTheme(theme: string | any): { success: boolean; error?: string } {
     return { success: false, error: 'Theme switching not supported in web UI' };
+  }
+
+  getToolsExpanded(): boolean {
+    return this.toolsExpanded;
+  }
+
+  setToolsExpanded(expanded: boolean): void {
+    this.toolsExpanded = expanded;
   }
 }

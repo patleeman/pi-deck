@@ -8,20 +8,20 @@ export interface PaneData extends PaneInfo {
 }
 
 // Layout tree node types
-interface PaneNode {
+export interface PaneNode {
   type: 'pane';
   id: string;
   slotId: string;
 }
 
-interface SplitNode {
+export interface SplitNode {
   type: 'split';
   direction: 'horizontal' | 'vertical';
   children: LayoutNode[];
   sizes: number[]; // Proportional sizes for each child
 }
 
-type LayoutNode = PaneNode | SplitNode;
+export type LayoutNode = PaneNode | SplitNode;
 
 interface UsePanesOptions {
   workspace: WorkspaceState | null;

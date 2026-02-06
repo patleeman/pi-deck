@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Menu, FileText, Settings as SettingsIcon, ChevronLeft } from 'lucide-react';
+import { Menu, FileText, ChevronLeft } from 'lucide-react';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { usePanes } from './hooks/usePanes';
 import { useNotifications } from './hooks/useNotifications';
@@ -461,6 +461,16 @@ function App() {
     };
   }, [isRightPaneResizing, isSidebarCollapsed]);
 
+  const handleClosePane = useCallback((paneId: string) => {
+    const pane = panes.panes.find((item) => item.id === paneId);
+    if (!pane) return;
+    if (panes.panes.length <= 1) {
+      ws.newSession(pane.sessionSlotId);
+      return;
+    }
+    panes.closePane(paneId);
+  }, [panes.panes, panes.closePane, ws]);
+
   // Keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     const isMod = e.metaKey || e.ctrlKey;
@@ -520,11 +530,11 @@ function App() {
       return;
     }
     
-    // ⌘W - Close pane (if more than one)
-    if (e.key === 'w' && isMod && panes.panes.length > 1) {
+    // ⌘W - Close pane (create new conversation if it's the last)
+    if (e.key === 'w' && isMod) {
       e.preventDefault();
       if (panes.focusedPaneId) {
-        panes.closePane(panes.focusedPaneId);
+        handleClosePane(panes.focusedPaneId);
       }
       return;
     }
@@ -545,7 +555,7 @@ function App() {
       ws.abort(panes.focusedSlotId);
       return;
     }
-  }, [showBrowser, forkDialogOpen, showHotkeys, treeDialogOpen, openSettings, toggleRightPane, isMobile, panes, ws]);
+  }, [showBrowser, forkDialogOpen, showHotkeys, treeDialogOpen, openSettings, toggleRightPane, isMobile, panes, handleClosePane, ws]);
 
   // Handle deploy
   const handleDeploy = useCallback(() => {
@@ -990,7 +1000,7 @@ function App() {
               backendCommands={backendCommands}
               onFocusPane={panes.focusPane}
               onSplit={panes.split}
-              onClosePane={panes.closePane}
+              onClosePane={handleClosePane}
               onResizeNode={panes.resizeNode}
               onSendPrompt={(slotId, message, images) => ws.sendPrompt(slotId, message, images)}
               onSteer={(slotId, message, images) => ws.steer(slotId, message, images)}
