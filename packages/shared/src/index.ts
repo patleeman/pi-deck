@@ -536,13 +536,21 @@ export type WsClientMessage =
   | WsExtensionUIResponseMessage
   // Custom UI (for ctx.ui.custom())
   | WsCustomUIInputMessage
-  // Plans
+  // Plans (legacy — kept for backward compat)
   | WsGetPlansMessage
   | WsGetPlanContentMessage
   | WsSavePlanMessage
   | WsActivatePlanMessage
   | WsDeactivatePlanMessage
-  | WsUpdatePlanTaskMessage;
+  | WsUpdatePlanTaskMessage
+  // Jobs
+  | WsGetJobsMessage
+  | WsGetJobContentMessage
+  | WsCreateJobMessage
+  | WsSaveJobMessage
+  | WsPromoteJobMessage
+  | WsDemoteJobMessage
+  | WsUpdateJobTaskMessage;
 
 // ============================================================================
 // WebSocket Messages (Server -> Client)
@@ -1099,12 +1107,19 @@ export type WsServerEvent =
   | WsCustomUIStartEvent
   | WsCustomUIUpdateEvent
   | WsCustomUICloseEvent
-  // Plans
+  // Plans (legacy)
   | WsPlansListEvent
   | WsPlanContentEvent
   | WsPlanSavedEvent
   | WsActivePlanEvent
-  | WsPlanTaskUpdatedEvent;
+  | WsPlanTaskUpdatedEvent
+  // Jobs
+  | WsJobsListEvent
+  | WsJobContentEvent
+  | WsJobSavedEvent
+  | WsJobPromotedEvent
+  | WsJobTaskUpdatedEvent
+  | WsActiveJobEvent;
 
 // ============================================================================
 // Data Types
@@ -1815,4 +1830,182 @@ export interface WsPlanTaskUpdatedEvent {
   workspaceId: string;
   planPath: string;
   plan: PlanInfo;
+}
+
+// ============================================================================
+// Job Types
+// ============================================================================
+
+export type JobPhase = 'backlog' | 'planning' | 'ready' | 'executing' | 'review' | 'complete';
+
+/** Display order for phases (most active first) */
+export const JOB_PHASE_ORDER: JobPhase[] = ['executing', 'planning', 'review', 'ready', 'backlog', 'complete'];
+
+export interface JobFrontmatter {
+  title?: string;
+  phase?: JobPhase;
+  created?: string;
+  updated?: string;
+  completedAt?: string;
+  planningSessionId?: string;
+  executionSessionId?: string;
+  /** Legacy plan compatibility: maps to phase */
+  status?: PlanStatus;
+}
+
+export interface JobTask {
+  /** Raw text of the task (without the checkbox prefix) */
+  text: string;
+  /** Whether the task is checked off */
+  done: boolean;
+  /** Indentation depth (0 = top-level) */
+  depth: number;
+  /** Line number in the original markdown (0-indexed) */
+  line: number;
+}
+
+export interface JobInfo {
+  /** File path (absolute) */
+  path: string;
+  /** File name without extension */
+  fileName: string;
+  /** Title from frontmatter or first H1 or filename */
+  title: string;
+  /** Current phase */
+  phase: JobPhase;
+  /** Parsed frontmatter */
+  frontmatter: JobFrontmatter;
+  /** Parsed tasks */
+  tasks: JobTask[];
+  /** Total task count */
+  taskCount: number;
+  /** Completed task count */
+  doneCount: number;
+  /** ISO datetime when last updated */
+  updatedAt: string;
+}
+
+export interface ActiveJobState {
+  /** Path to the active job file */
+  jobPath: string;
+  /** Job title */
+  title: string;
+  /** Current phase */
+  phase: JobPhase;
+  /** Current tasks snapshot */
+  tasks: JobTask[];
+  /** Total task count */
+  taskCount: number;
+  /** Completed task count */
+  doneCount: number;
+  /** Session slot ID for the active conversation (planning or executing) */
+  sessionSlotId?: string;
+}
+
+// ============================================================================
+// Job WebSocket Messages (Client -> Server)
+// ============================================================================
+
+/** List jobs for a workspace */
+export interface WsGetJobsMessage extends WorkspaceScopedMessage {
+  type: 'getJobs';
+}
+
+/** Get full job content */
+export interface WsGetJobContentMessage extends WorkspaceScopedMessage {
+  type: 'getJobContent';
+  jobPath: string;
+}
+
+/** Create a new job */
+export interface WsCreateJobMessage extends WorkspaceScopedMessage {
+  type: 'createJob';
+  title: string;
+  description: string;
+}
+
+/** Save job content (autosave from editor) */
+export interface WsSaveJobMessage extends WorkspaceScopedMessage {
+  type: 'saveJob';
+  jobPath: string;
+  content: string;
+}
+
+/** Promote a job to the next phase */
+export interface WsPromoteJobMessage extends WorkspaceScopedMessage {
+  type: 'promoteJob';
+  jobPath: string;
+  /** Target phase. If omitted, promotes to the natural next phase. */
+  toPhase?: JobPhase;
+}
+
+/** Demote a job back a phase */
+export interface WsDemoteJobMessage extends WorkspaceScopedMessage {
+  type: 'demoteJob';
+  jobPath: string;
+  /** Target phase. If omitted, demotes to the natural previous phase. */
+  toPhase?: JobPhase;
+}
+
+/** Toggle a single task checkbox */
+export interface WsUpdateJobTaskMessage extends WorkspaceScopedMessage {
+  type: 'updateJobTask';
+  jobPath: string;
+  /** Line number of the task (0-indexed) */
+  line: number;
+  /** New done state */
+  done: boolean;
+}
+
+// ============================================================================
+// Job WebSocket Events (Server -> Client)
+// ============================================================================
+
+/** Jobs list for a workspace */
+export interface WsJobsListEvent {
+  type: 'jobsList';
+  workspaceId: string;
+  jobs: JobInfo[];
+}
+
+/** Job content response */
+export interface WsJobContentEvent {
+  type: 'jobContent';
+  workspaceId: string;
+  jobPath: string;
+  content: string;
+  job: JobInfo;
+}
+
+/** Job saved confirmation */
+export interface WsJobSavedEvent {
+  type: 'jobSaved';
+  workspaceId: string;
+  jobPath: string;
+  job: JobInfo;
+}
+
+/** Job promoted/demoted — phase changed */
+export interface WsJobPromotedEvent {
+  type: 'jobPromoted';
+  workspaceId: string;
+  jobPath: string;
+  job: JobInfo;
+  /** Session slot ID if a conversation was created (planning/executing) */
+  sessionSlotId?: string;
+}
+
+/** Job task toggled */
+export interface WsJobTaskUpdatedEvent {
+  type: 'jobTaskUpdated';
+  workspaceId: string;
+  jobPath: string;
+  job: JobInfo;
+}
+
+/** Active job state changed (for banner above chat input) */
+export interface WsActiveJobEvent {
+  type: 'activeJob';
+  workspaceId: string;
+  activeJobs: ActiveJobState[];
 }

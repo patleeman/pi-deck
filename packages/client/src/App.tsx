@@ -338,6 +338,43 @@ function App() {
     return () => window.removeEventListener('pi:planSlotCreated', handlePlanSlotCreated as EventListener);
   }, [ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
+  // Listen for job promotion — create a new tab for the job's session slot
+  useEffect(() => {
+    const handleJobSlotCreated = (e: CustomEvent<{ workspaceId: string; sessionSlotId: string }>) => {
+      const { workspaceId, sessionSlotId } = e.detail;
+      const workspace = ws.workspaces.find(w => w.id === workspaceId);
+      if (!workspace) return;
+      const workspacePath = workspace.path;
+      const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
+
+      // Check if a tab for this slot already exists (re-promotion)
+      const existingTab = tabs.find(t =>
+        t.layout.type === 'pane' && t.layout.slotId === sessionSlotId
+      );
+      if (existingTab) {
+        // Just switch to the existing tab
+        ws.setPaneTabsForWorkspace(workspacePath, tabs, existingTab.id);
+        return;
+      }
+
+      const newTabId = createTabId();
+      const newPaneId = createPaneId();
+      // Derive label from slot ID: "job-planning-..." → "Job: Planning", "job-executing-..." → "Job: Executing"
+      const phaseMatch = sessionSlotId.match(/^job-(planning|executing)/);
+      const label = phaseMatch ? `Job: ${phaseMatch[1].charAt(0).toUpperCase() + phaseMatch[1].slice(1)}` : 'Job';
+      const newTab: PaneTabPageState = {
+        id: newTabId,
+        label,
+        layout: createSinglePaneLayout(sessionSlotId, newPaneId),
+        focusedPaneId: newPaneId,
+      };
+      ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
+    };
+
+    window.addEventListener('pi:jobSlotCreated', handleJobSlotCreated as EventListener);
+    return () => window.removeEventListener('pi:jobSlotCreated', handleJobSlotCreated as EventListener);
+  }, [ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
+
   useEffect(() => {
     const handleWorkspaceEntries = (e: CustomEvent<{ workspaceId: string; path: string; entries: FileInfo[]; requestId?: string }>) => {
       if (e.detail.requestId && !e.detail.requestId.startsWith('workspace-entries:')) return;
@@ -1351,6 +1388,14 @@ function App() {
               onActivatePlan={ws.activatePlan}
               onDeactivatePlan={ws.deactivatePlan}
               onUpdatePlanTask={ws.updatePlanTask}
+              activeJobs={ws.activeJobsByWorkspace[activeWs!.id] || []}
+              onGetJobs={ws.getJobs}
+              onGetJobContent={ws.getJobContent}
+              onCreateJob={ws.createJob}
+              onSaveJob={ws.saveJob}
+              onPromoteJob={ws.promoteJob}
+              onDemoteJob={ws.demoteJob}
+              onUpdateJobTask={ws.updateJobTask}
               onTogglePane={toggleRightPane}
               openFilePath={openFilePathByWorkspace[activeWs!.id]}
             />
@@ -1408,6 +1453,14 @@ function App() {
             onActivatePlan={ws.activatePlan}
             onDeactivatePlan={ws.deactivatePlan}
             onUpdatePlanTask={ws.updatePlanTask}
+            activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
+            onGetJobs={ws.getJobs}
+            onGetJobContent={ws.getJobContent}
+            onCreateJob={ws.createJob}
+            onSaveJob={ws.saveJob}
+            onPromoteJob={ws.promoteJob}
+            onDemoteJob={ws.demoteJob}
+            onUpdateJobTask={ws.updateJobTask}
             onTogglePane={toggleRightPane}
             openFilePath={openFilePathByWorkspace[activeWs.id]}
           />

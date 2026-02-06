@@ -13,8 +13,13 @@ import { getWorkspaceManager } from './workspace-manager.js';
 import { getUIStateStore } from './ui-state.js';
 import { getGitChangedFiles, getGitChangedDirectories, getFileDiff } from './git-info.js';
 import { discoverPlans, readPlan, writePlan, parsePlan, updateTaskInContent, getActivePlanState, buildActivePlanPrompt, updateFrontmatterStatus } from './plan-service.js';
+import {
+  discoverJobs, readJob, writeJob, createJob, promoteJob, demoteJob,
+  updateTaskInContent as updateJobTaskInContent, setJobSessionId,
+  buildPlanningPrompt, buildExecutionPrompt, getActiveJobStates, parseJob,
+} from './job-service.js';
 import type { SessionOrchestrator } from './session-orchestrator.js';
-import type { WsClientMessage, WsServerEvent, ActivePlanState } from '@pi-web-ui/shared';
+import type { WsClientMessage, WsServerEvent, ActivePlanState, ActiveJobState } from '@pi-web-ui/shared';
 
 // Load configuration
 const config = loadConfig();
@@ -140,6 +145,68 @@ setInterval(() => {
     }
   }
 }, ACTIVE_PLAN_POLL_INTERVAL_MS); // Poll every 3 seconds
+
+// Track active job file content hashes for change detection
+const activeJobHashes = new Map<string, string>();
+const ACTIVE_JOB_POLL_INTERVAL_MS = 3000;
+
+// Poll active job files for changes (agent modifying checkboxes/content)
+setInterval(() => {
+  for (const [, workspaceIds] of clientWorkspaces.entries()) {
+    for (const workspaceId of workspaceIds) {
+      const workspace = workspaceManager.getWorkspace(workspaceId);
+      if (!workspace) continue;
+
+      let activeJobs: ActiveJobState[];
+      try {
+        activeJobs = getActiveJobStates(workspace.path);
+      } catch {
+        continue;
+      }
+
+      if (activeJobs.length === 0) continue;
+
+      let anyChanged = false;
+      for (const aj of activeJobs) {
+        try {
+          if (!existsSync(aj.jobPath)) continue;
+
+          const content = readFileSync(aj.jobPath, 'utf-8');
+          const hash = `${content.length}:${content.slice(0, 100)}:${content.slice(-100)}`;
+          const key = `${workspaceId}:${aj.jobPath}`;
+          const prevHash = activeJobHashes.get(key);
+
+          if (prevHash && prevHash !== hash) {
+            anyChanged = true;
+            // Broadcast updated job content
+            const job = parseJob(aj.jobPath, content);
+            broadcastToWorkspace(workspaceId, {
+              type: 'jobContent',
+              workspaceId,
+              jobPath: aj.jobPath,
+              content,
+              job,
+            });
+          }
+          activeJobHashes.set(key, hash);
+        } catch {
+          // File read error — skip
+        }
+      }
+
+      if (anyChanged) {
+        // Refresh full list and active states
+        const jobs = discoverJobs(workspace.path);
+        broadcastToWorkspace(workspaceId, { type: 'jobsList', workspaceId, jobs });
+        broadcastToWorkspace(workspaceId, {
+          type: 'activeJob',
+          workspaceId,
+          activeJobs: getActiveJobStates(workspace.path),
+        });
+      }
+    }
+  }
+}, ACTIVE_JOB_POLL_INTERVAL_MS);
 
 /**
  * Broadcast an event to all clients attached to a specific workspace
@@ -302,6 +369,20 @@ async function handleMessage(
           workspaceId: result.workspace.id,
           activePlan: activePlanState,
         });
+      }
+
+      // Send active job states (jobs in planning/executing phase)
+      try {
+        const activeJobs = getActiveJobStates(message.path);
+        if (activeJobs.length > 0) {
+          send(ws, {
+            type: 'activeJob',
+            workspaceId: result.workspace.id,
+            activeJobs,
+          });
+        }
+      } catch {
+        // Ignore — jobs directory may not exist yet
       }
       break;
     }
@@ -1713,6 +1794,236 @@ async function handleMessage(
         send(ws, {
           type: 'error',
           message: `Failed to update task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    // ========================================================================
+    // Jobs
+    // ========================================================================
+    case 'getJobs': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) {
+        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs: [] });
+        break;
+      }
+      const jobs = discoverJobs(workspace.path);
+      send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+      break;
+    }
+
+    case 'getJobContent': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const { content, job } = readJob(message.jobPath);
+        send(ws, {
+          type: 'jobContent',
+          workspaceId: message.workspaceId,
+          jobPath: message.jobPath,
+          content,
+          job,
+        });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to read job: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'createJob': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const { path: jobPath, job } = createJob(workspace.path, message.title, message.description);
+        send(ws, {
+          type: 'jobSaved',
+          workspaceId: message.workspaceId,
+          jobPath,
+          job,
+        });
+        // Refresh jobs list
+        const jobs = discoverJobs(workspace.path);
+        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to create job: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'saveJob': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const job = writeJob(message.jobPath, message.content);
+        send(ws, {
+          type: 'jobSaved',
+          workspaceId: message.workspaceId,
+          jobPath: message.jobPath,
+          job,
+        });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to save job: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'promoteJob': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const { job } = promoteJob(message.jobPath, message.toPhase);
+        let sessionSlotId: string | undefined;
+
+        // If promoted to planning or executing, spin up a conversation
+        if (job.phase === 'planning' || job.phase === 'executing') {
+          const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+
+          if (job.phase === 'executing' && job.frontmatter.executionSessionId) {
+            // Reuse existing execution session (e.g., demoted from review, now re-promoted)
+            sessionSlotId = job.frontmatter.executionSessionId;
+          } else {
+            // Create a new session slot
+            const slotId = `job-${job.phase}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+            const slotResult = await orchestrator.createSlot(slotId);
+            sessionSlotId = slotId;
+
+            // Apply stored thinking level preference
+            const uiState = uiStateStore.loadState();
+            const storedThinkingLevel = uiState.thinkingLevels[workspace.path];
+            if (storedThinkingLevel) {
+              orchestrator.setThinkingLevel(slotId, storedThinkingLevel);
+              slotResult.state = await orchestrator.getState(slotId);
+            }
+
+            // Send slot created event so client can wire up a new tab
+            send(ws, {
+              type: 'sessionSlotCreated',
+              workspaceId: message.workspaceId,
+              sessionSlotId: slotId,
+              state: slotResult.state,
+              messages: slotResult.messages,
+            });
+
+            // Store the session ID in frontmatter
+            const sessionField = job.phase === 'planning' ? 'planningSessionId' : 'executionSessionId';
+            setJobSessionId(message.jobPath, sessionField, slotId);
+
+            // Send the initial prompt
+            const prompt = job.phase === 'planning'
+              ? buildPlanningPrompt(message.jobPath)
+              : buildExecutionPrompt(message.jobPath);
+            const initialMessage = job.phase === 'planning'
+              ? `${prompt}\n\nPlease read the job file and help me create a plan.`
+              : `${prompt}\n\nPlease read the job file and begin working through the tasks.`;
+            await orchestrator.prompt(slotId, initialMessage);
+          }
+        }
+
+        send(ws, {
+          type: 'jobPromoted',
+          workspaceId: message.workspaceId,
+          jobPath: message.jobPath,
+          job,
+          sessionSlotId,
+        });
+
+        // Refresh jobs list
+        const jobs = discoverJobs(workspace.path);
+        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+
+        // Send active job states
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, {
+          type: 'activeJob',
+          workspaceId: message.workspaceId,
+          activeJobs,
+        });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to promote job: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'demoteJob': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const { job } = demoteJob(message.jobPath, message.toPhase);
+
+        send(ws, {
+          type: 'jobPromoted', // reuse same event — it's a phase change
+          workspaceId: message.workspaceId,
+          jobPath: message.jobPath,
+          job,
+          // If demoting to executing, provide the existing session slot
+          sessionSlotId: job.phase === 'executing' ? job.frontmatter.executionSessionId : undefined,
+        });
+
+        // Refresh jobs list
+        const jobs = discoverJobs(workspace.path);
+        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+
+        // Send active job states
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, {
+          type: 'activeJob',
+          workspaceId: message.workspaceId,
+          activeJobs,
+        });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to demote job: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'updateJobTask': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const { content } = readJob(message.jobPath);
+        const updatedContent = updateJobTaskInContent(content, message.line, message.done);
+        const job = writeJob(message.jobPath, updatedContent);
+
+        send(ws, {
+          type: 'jobTaskUpdated',
+          workspaceId: message.workspaceId,
+          jobPath: message.jobPath,
+          job,
+        });
+
+        // Send updated active job states (progress may have changed)
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, {
+          type: 'activeJob',
+          workspaceId: message.workspaceId,
+          activeJobs,
+        });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to update job task: ${err instanceof Error ? err.message : 'Unknown error'}`,
           workspaceId: message.workspaceId,
         });
       }

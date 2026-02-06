@@ -3,9 +3,10 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import { ArrowUp, ChevronDown, ChevronRight, Folder, FileText, LoaderCircle, GitBranch, FolderOpen, ClipboardList, X } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { FileInfo, GitFileStatus, GitStatusFile, ActivePlanState } from '@pi-web-ui/shared';
+import type { FileInfo, GitFileStatus, GitStatusFile, ActivePlanState, ActiveJobState, JobPhase } from '@pi-web-ui/shared';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { PlansPane } from './PlansPane';
+import { JobsPane } from './JobsPane';
 
 // Git status colors matching common IDE conventions
 const GIT_STATUS_COLORS: Record<GitFileStatus, string> = {
@@ -35,7 +36,7 @@ const GIT_STATUS_LABELS: Record<GitFileStatus, string> = {
   conflicted: 'Conflicted',
 };
 
-type TabType = 'files' | 'git' | 'plans';
+type TabType = 'files' | 'git' | 'plans' | 'jobs';
 
 interface WorkspaceFilesPaneProps {
   workspaceName: string;
@@ -55,6 +56,15 @@ interface WorkspaceFilesPaneProps {
   onActivatePlan: (planPath: string) => void;
   onDeactivatePlan: () => void;
   onUpdatePlanTask: (planPath: string, line: number, done: boolean) => void;
+  // Jobs
+  activeJobs: ActiveJobState[];
+  onGetJobs: () => void;
+  onGetJobContent: (jobPath: string) => void;
+  onCreateJob: (title: string, description: string) => void;
+  onSaveJob: (jobPath: string, content: string) => void;
+  onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
+  onDemoteJob: (jobPath: string, toPhase?: JobPhase) => void;
+  onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
   onTogglePane: () => void;
   openFilePath?: string;
   className?: string;
@@ -220,6 +230,14 @@ export function WorkspaceFilesPane({
   onActivatePlan,
   onDeactivatePlan,
   onUpdatePlanTask,
+  activeJobs,
+  onGetJobs,
+  onGetJobContent,
+  onCreateJob,
+  onSaveJob,
+  onPromoteJob,
+  onDemoteJob,
+  onUpdateJobTask,
   onTogglePane,
   openFilePath,
   className = '',
@@ -562,18 +580,18 @@ export function WorkspaceFilesPane({
           )}
         </button>
         <button
-          onClick={() => setActiveTab('plans')}
+          onClick={() => setActiveTab('jobs')}
           className={`px-2 h-full text-[14px] sm:text-[12px] uppercase tracking-wide transition-colors flex items-center gap-1.5 ${
-            activeTab === 'plans'
+            activeTab === 'jobs'
               ? 'text-pi-text border-b-2 border-pi-accent -mb-[1px]'
               : 'text-pi-muted hover:text-pi-text'
           }`}
         >
           <ClipboardList className="w-4 h-4 sm:w-3 sm:h-3" />
-          Plans
-          {activePlan && (
+          Jobs
+          {activeJobs.length > 0 && (
             <span className="bg-green-500/20 text-green-400 px-1.5 rounded text-[10px] font-medium">
-              {activePlan.doneCount}/{activePlan.taskCount}
+              {activeJobs.length}
             </span>
           )}
         </button>
@@ -589,7 +607,24 @@ export function WorkspaceFilesPane({
         </button>
       </div>
 
-      {/* Plans tab - takes full area */}
+      {/* Jobs tab - takes full area */}
+      {activeTab === 'jobs' && (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <JobsPane
+            workspaceId={workspaceId}
+            activeJobs={activeJobs}
+            onGetJobs={onGetJobs}
+            onGetJobContent={onGetJobContent}
+            onCreateJob={onCreateJob}
+            onSaveJob={onSaveJob}
+            onPromoteJob={onPromoteJob}
+            onDemoteJob={onDemoteJob}
+            onUpdateJobTask={onUpdateJobTask}
+          />
+        </div>
+      )}
+
+      {/* Plans tab (legacy) - takes full area */}
       {activeTab === 'plans' && (
         <div className="flex-1 min-h-0 overflow-hidden">
           <PlansPane
@@ -606,7 +641,7 @@ export function WorkspaceFilesPane({
       )}
 
       {/* Files / Git tabs - split pane layout */}
-      {activeTab !== 'plans' && (
+      {activeTab !== 'plans' && activeTab !== 'jobs' && (
       <div className="flex-1 min-h-0 flex flex-col" ref={splitRef}>
         <div className="min-h-0 flex flex-col" style={{ flex: `${treeRatio} 1 0%` }}>
           {/* Path breadcrumb */}

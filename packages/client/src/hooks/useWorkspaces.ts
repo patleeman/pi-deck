@@ -199,6 +199,16 @@ export interface UseWorkspacesReturn {
   activatePlan: (planPath: string) => void;
   deactivatePlan: () => void;
   updatePlanTask: (planPath: string, line: number, done: boolean) => void;
+
+  // Jobs
+  activeJobsByWorkspace: Record<string, import('@pi-web-ui/shared').ActiveJobState[]>;
+  getJobs: () => void;
+  getJobContent: (jobPath: string) => void;
+  createJob: (title: string, description: string) => void;
+  saveJob: (jobPath: string, content: string) => void;
+  promoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) => void;
+  demoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) => void;
+  updateJobTask: (jobPath: string, line: number, done: boolean) => void;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 52; // Narrow sidebar per mockup
@@ -257,6 +267,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
   const [activePaneTabByWorkspace, setActivePaneTabByWorkspace] = useState<Record<string, string>>({});
   const [deployState, setDeployState] = useState<DeployState>({ status: 'idle', message: null });
   const [activePlanByWorkspace, setActivePlanByWorkspace] = useState<Record<string, import('@pi-web-ui/shared').ActivePlanState | null>>({});
+  const [activeJobsByWorkspace, setActiveJobsByWorkspace] = useState<Record<string, import('@pi-web-ui/shared').ActiveJobState[]>>({});
   
   const workspacesRef = useRef<WorkspaceState[]>([]);
   const activeWorkspaceIdRef = useRef<string | null>(null);
@@ -516,6 +527,12 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           // If this is a plan slot, dispatch event for tab creation
           if (event.sessionSlotId.startsWith('plan-')) {
             window.dispatchEvent(new CustomEvent('pi:planSlotCreated', {
+              detail: { workspaceId: event.workspaceId, sessionSlotId: event.sessionSlotId },
+            }));
+          }
+          // If this is a job slot, dispatch event for tab creation
+          if (event.sessionSlotId.startsWith('job-')) {
+            window.dispatchEvent(new CustomEvent('pi:jobSlotCreated', {
               detail: { workspaceId: event.workspaceId, sessionSlotId: event.sessionSlotId },
             }));
           }
@@ -1244,6 +1261,36 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           break;
         }
 
+        // Job events
+        case 'jobsList': {
+          window.dispatchEvent(new CustomEvent('pi:jobsList', { detail: event }));
+          break;
+        }
+        case 'jobContent': {
+          window.dispatchEvent(new CustomEvent('pi:jobContent', { detail: event }));
+          break;
+        }
+        case 'jobSaved': {
+          window.dispatchEvent(new CustomEvent('pi:jobSaved', { detail: event }));
+          break;
+        }
+        case 'jobPromoted': {
+          window.dispatchEvent(new CustomEvent('pi:jobPromoted', { detail: event }));
+          break;
+        }
+        case 'jobTaskUpdated': {
+          window.dispatchEvent(new CustomEvent('pi:jobTaskUpdated', { detail: event }));
+          break;
+        }
+        case 'activeJob': {
+          setActiveJobsByWorkspace((prev) => ({
+            ...prev,
+            [event.workspaceId]: event.activeJobs,
+          }));
+          window.dispatchEvent(new CustomEvent('pi:activeJob', { detail: event }));
+          break;
+        }
+
         case 'error':
           setError(event.message);
           break;
@@ -1694,6 +1741,37 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     updatePlanTask: (planPath: string, line: number, done: boolean) =>
       withActiveWorkspace((workspaceId) =>
         send({ type: 'updatePlanTask', workspaceId, planPath, line, done })
+      ),
+
+    // Jobs
+    activeJobsByWorkspace,
+    getJobs: () =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'getJobs', workspaceId })
+      ),
+    getJobContent: (jobPath: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'getJobContent', workspaceId, jobPath })
+      ),
+    createJob: (title: string, description: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'createJob', workspaceId, title, description })
+      ),
+    saveJob: (jobPath: string, content: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'saveJob', workspaceId, jobPath, content })
+      ),
+    promoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'promoteJob', workspaceId, jobPath, toPhase })
+      ),
+    demoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'demoteJob', workspaceId, jobPath, toPhase })
+      ),
+    updateJobTask: (jobPath: string, line: number, done: boolean) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'updateJobTask', workspaceId, jobPath, line, done })
       ),
   };
 }

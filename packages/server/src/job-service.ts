@@ -1,0 +1,454 @@
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs';
+import { join, basename, resolve } from 'path';
+import { homedir } from 'os';
+import type { JobPhase, JobFrontmatter, JobInfo, JobTask, PlanStatus } from '@pi-web-ui/shared';
+
+// Re-export parseTasks from plan-service (same format)
+export { parseTasks } from './plan-service.js';
+import { parseTasks } from './plan-service.js';
+
+// ============================================================================
+// Phase Helpers
+// ============================================================================
+
+const PHASE_ORDER: JobPhase[] = ['backlog', 'planning', 'ready', 'executing', 'review', 'complete'];
+
+/** Map legacy plan `status` to job `phase` */
+function statusToPhase(status: PlanStatus): JobPhase {
+  switch (status) {
+    case 'draft': return 'backlog';
+    case 'active': return 'executing';
+    case 'complete': return 'complete';
+    default: return 'backlog';
+  }
+}
+
+export function getNextPhase(current: JobPhase): JobPhase | null {
+  const idx = PHASE_ORDER.indexOf(current);
+  if (idx < 0 || idx >= PHASE_ORDER.length - 1) return null;
+  return PHASE_ORDER[idx + 1];
+}
+
+export function getPreviousPhase(current: JobPhase): JobPhase | null {
+  const idx = PHASE_ORDER.indexOf(current);
+  if (idx <= 0) return null;
+  return PHASE_ORDER[idx - 1];
+}
+
+// ============================================================================
+// Frontmatter Parsing
+// ============================================================================
+
+export function parseJobFrontmatter(content: string): { frontmatter: JobFrontmatter; bodyStart: number } {
+  const frontmatter: JobFrontmatter = {};
+
+  if (!content.startsWith('---')) {
+    return { frontmatter, bodyStart: 0 };
+  }
+
+  const endIndex = content.indexOf('\n---', 3);
+  if (endIndex === -1) {
+    return { frontmatter, bodyStart: 0 };
+  }
+
+  const fmBlock = content.slice(4, endIndex); // skip opening '---\n'
+  const lines = fmBlock.split('\n');
+
+  for (const line of lines) {
+    const match = line.match(/^(\w+)\s*:\s*(.*)$/);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    const value = rawValue.trim();
+
+    switch (key) {
+      case 'title':
+        frontmatter.title = value;
+        break;
+      case 'phase':
+        if (PHASE_ORDER.includes(value as JobPhase)) {
+          frontmatter.phase = value as JobPhase;
+        }
+        break;
+      case 'status':
+        // Legacy plan compatibility
+        if (['draft', 'active', 'complete'].includes(value)) {
+          frontmatter.status = value as PlanStatus;
+        }
+        break;
+      case 'created':
+        frontmatter.created = value;
+        break;
+      case 'updated':
+        frontmatter.updated = value;
+        break;
+      case 'completedAt':
+        frontmatter.completedAt = value;
+        break;
+      case 'completed':
+        // Legacy plan field → map to completedAt
+        frontmatter.completedAt = value;
+        break;
+      case 'planningSessionId':
+        frontmatter.planningSessionId = value;
+        break;
+      case 'executionSessionId':
+        frontmatter.executionSessionId = value;
+        break;
+    }
+  }
+
+  const bodyStart = endIndex + 4; // skip '\n---'
+  return { frontmatter, bodyStart: Math.min(bodyStart, content.length) };
+}
+
+// ============================================================================
+// Job Parsing
+// ============================================================================
+
+export function parseJob(filePath: string, content: string): JobInfo {
+  const { frontmatter } = parseJobFrontmatter(content);
+  const tasks = parseTasks(content);
+  const fileName = basename(filePath, '.md');
+
+  // Determine title: frontmatter > first H1 > filename
+  let title = frontmatter.title;
+  if (!title) {
+    const h1Match = content.match(/^#\s+(.+)$/m);
+    title = h1Match ? h1Match[1] : fileName;
+  }
+
+  // Determine phase: explicit phase > mapped status > backlog
+  let phase: JobPhase = 'backlog';
+  if (frontmatter.phase) {
+    phase = frontmatter.phase;
+  } else if (frontmatter.status) {
+    phase = statusToPhase(frontmatter.status);
+  }
+
+  const doneCount = tasks.filter(t => t.done).length;
+  const updatedAt = frontmatter.updated || frontmatter.created || new Date().toISOString();
+
+  return {
+    path: filePath,
+    fileName,
+    title,
+    phase,
+    frontmatter,
+    tasks,
+    taskCount: tasks.length,
+    doneCount,
+    updatedAt,
+  };
+}
+
+// ============================================================================
+// Frontmatter Update
+// ============================================================================
+
+/**
+ * Update or set fields in the YAML frontmatter of a job file.
+ * Creates frontmatter if it doesn't exist.
+ */
+export function updateJobFrontmatter(
+  content: string,
+  updates: Record<string, string | undefined>,
+): string {
+  if (!content.startsWith('---')) {
+    // No frontmatter — prepend it
+    const lines = ['---'];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) lines.push(`${key}: ${value}`);
+    }
+    lines.push('---', '');
+    return lines.join('\n') + content;
+  }
+
+  const endIndex = content.indexOf('\n---', 3);
+  if (endIndex === -1) return content;
+
+  let fmBlock = content.slice(4, endIndex);
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    const regex = new RegExp(`^${key}\\s*:.*$`, 'm');
+    if (fmBlock.match(regex)) {
+      fmBlock = fmBlock.replace(regex, `${key}: ${value}`);
+    } else {
+      fmBlock += `\n${key}: ${value}`;
+    }
+  }
+
+  return `---\n${fmBlock}\n---${content.slice(endIndex + 4)}`;
+}
+
+// ============================================================================
+// Task Update (reuse from plan-service)
+// ============================================================================
+
+export function updateTaskInContent(content: string, lineNumber: number, done: boolean): string {
+  const lines = content.split('\n');
+  if (lineNumber < 0 || lineNumber >= lines.length) return content;
+
+  const line = lines[lineNumber];
+  if (done) {
+    lines[lineNumber] = line.replace(/- \[ \]/, '- [x]');
+  } else {
+    lines[lineNumber] = line.replace(/- \[[xX]\]/, '- [ ]');
+  }
+
+  return lines.join('\n');
+}
+
+// ============================================================================
+// Job Discovery
+// ============================================================================
+
+export function getJobDirectories(workspacePath: string): string[] {
+  const workspaceName = basename(workspacePath);
+  const dirs: string[] = [];
+
+  // Primary: ~/jobs/<workspace-name>/
+  dirs.push(join(homedir(), 'jobs', workspaceName));
+
+  // Local: <workspace>/.pi/jobs/
+  dirs.push(join(workspacePath, '.pi', 'jobs'));
+
+  // Legacy: ~/plans/<workspace-name>/
+  dirs.push(join(homedir(), 'plans', workspaceName));
+
+  return dirs;
+}
+
+export function discoverJobs(workspacePath: string): JobInfo[] {
+  const dirs = getJobDirectories(workspacePath);
+  const jobs: JobInfo[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+
+    try {
+      const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+      for (const file of files) {
+        const filePath = resolve(join(dir, file));
+        if (seenPaths.has(filePath)) continue;
+        seenPaths.add(filePath);
+
+        try {
+          const content = readFileSync(filePath, 'utf-8');
+          jobs.push(parseJob(filePath, content));
+        } catch (err) {
+          console.warn(`[JobService] Failed to parse job file: ${filePath}`, err);
+        }
+      }
+    } catch (err) {
+      console.warn(`[JobService] Failed to read job directory: ${dir}`, err);
+    }
+  }
+
+  // Sort: active phases first (executing, planning), then by updated descending
+  const phaseWeight: Record<JobPhase, number> = {
+    executing: 0,
+    planning: 1,
+    review: 2,
+    ready: 3,
+    backlog: 4,
+    complete: 5,
+  };
+
+  jobs.sort((a, b) => {
+    const pw = phaseWeight[a.phase] - phaseWeight[b.phase];
+    if (pw !== 0) return pw;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
+
+  return jobs;
+}
+
+// ============================================================================
+// Job CRUD
+// ============================================================================
+
+export function readJob(jobPath: string): { content: string; job: JobInfo } {
+  const content = readFileSync(jobPath, 'utf-8');
+  const job = parseJob(jobPath, content);
+  return { content, job };
+}
+
+export function writeJob(jobPath: string, content: string): JobInfo {
+  writeFileSync(jobPath, content, 'utf-8');
+  return parseJob(jobPath, content);
+}
+
+/**
+ * Create a new job file in the primary jobs directory.
+ */
+export function createJob(workspacePath: string, title: string, description: string): { path: string; content: string; job: JobInfo } {
+  const workspaceName = basename(workspacePath);
+  const jobsDir = join(homedir(), 'jobs', workspaceName);
+
+  // Ensure directory exists
+  if (!existsSync(jobsDir)) {
+    mkdirSync(jobsDir, { recursive: true });
+  }
+
+  // Generate filename: YYYYMMDD-<slug>.md
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  
+  let filePath = join(jobsDir, `${dateStr}-${slug}.md`);
+  
+  // Handle collision
+  let counter = 1;
+  while (existsSync(filePath)) {
+    filePath = join(jobsDir, `${dateStr}-${slug}-${counter}.md`);
+    counter++;
+  }
+
+  const isoNow = now.toISOString();
+  const content = [
+    '---',
+    `title: ${title}`,
+    'phase: backlog',
+    `created: ${isoNow}`,
+    `updated: ${isoNow}`,
+    '---',
+    '',
+    `# ${title}`,
+    '',
+    '## Description',
+    description,
+    '',
+  ].join('\n');
+
+  writeFileSync(filePath, content, 'utf-8');
+  const job = parseJob(filePath, content);
+  return { path: filePath, content, job };
+}
+
+/**
+ * Promote a job to the next (or specified) phase.
+ * Returns the updated content and job info.
+ */
+export function promoteJob(
+  jobPath: string,
+  toPhase?: JobPhase,
+): { content: string; job: JobInfo } {
+  const { content, job } = readJob(jobPath);
+  const targetPhase = toPhase || getNextPhase(job.phase);
+
+  if (!targetPhase) {
+    throw new Error(`Cannot promote job from phase "${job.phase}" — already at final phase`);
+  }
+
+  const now = new Date().toISOString();
+  const updates: Record<string, string | undefined> = {
+    phase: targetPhase,
+    updated: now,
+  };
+
+  if (targetPhase === 'complete') {
+    updates.completedAt = now;
+  }
+
+  const updatedContent = updateJobFrontmatter(content, updates);
+  const updatedJob = writeJob(jobPath, updatedContent);
+  return { content: updatedContent, job: updatedJob };
+}
+
+/**
+ * Demote a job to a previous (or specified) phase.
+ */
+export function demoteJob(
+  jobPath: string,
+  toPhase?: JobPhase,
+): { content: string; job: JobInfo } {
+  const { content, job } = readJob(jobPath);
+  const targetPhase = toPhase || getPreviousPhase(job.phase);
+
+  if (!targetPhase) {
+    throw new Error(`Cannot demote job from phase "${job.phase}" — already at first phase`);
+  }
+
+  const now = new Date().toISOString();
+  const updates: Record<string, string | undefined> = {
+    phase: targetPhase,
+    updated: now,
+  };
+
+  const updatedContent = updateJobFrontmatter(content, updates);
+  const updatedJob = writeJob(jobPath, updatedContent);
+  return { content: updatedContent, job: updatedJob };
+}
+
+/**
+ * Store a session ID in the job frontmatter.
+ */
+export function setJobSessionId(
+  jobPath: string,
+  field: 'planningSessionId' | 'executionSessionId',
+  sessionId: string,
+): void {
+  const { content } = readJob(jobPath);
+  const updatedContent = updateJobFrontmatter(content, {
+    [field]: sessionId,
+    updated: new Date().toISOString(),
+  });
+  writeFileSync(jobPath, updatedContent, 'utf-8');
+}
+
+// ============================================================================
+// Active Job Helpers
+// ============================================================================
+
+/**
+ * Build the system prompt for a planning conversation.
+ */
+export function buildPlanningPrompt(jobPath: string): string {
+  return `<active_job phase="planning">
+You have a job to plan at: ${jobPath}
+Read the job file. It contains a title and description.
+Your goal is to create a detailed implementation plan. Ask the user clarifying questions if needed, then write a concrete plan with \`- [ ]\` checkbox tasks back into the job file under a "## Plan" section.
+Group tasks under \`### Phase\` headings. Keep tasks concise and actionable (start with a verb).
+When you're done writing the plan, let the user know so they can review and iterate or mark it as ready.
+</active_job>`;
+}
+
+/**
+ * Build the system prompt for an execution conversation.
+ */
+export function buildExecutionPrompt(jobPath: string): string {
+  return `<active_job phase="executing">
+You have a job to execute at: ${jobPath}
+Read the job file. It contains a plan with \`- [ ]\` checkbox tasks.
+Work through each task systematically. As you complete each one, update the job file by checking off the corresponding checkbox (change \`- [ ]\` to \`- [x]\`).
+When all tasks are complete, let the user know the job is ready for review.
+</active_job>`;
+}
+
+/**
+ * Get active job states for a workspace (jobs in planning or executing phase).
+ */
+export function getActiveJobStates(workspacePath: string): import('@pi-web-ui/shared').ActiveJobState[] {
+  const jobs = discoverJobs(workspacePath);
+  const activePhases: import('@pi-web-ui/shared').JobPhase[] = ['planning', 'executing'];
+
+  return jobs
+    .filter(j => activePhases.includes(j.phase))
+    .map(j => ({
+      jobPath: j.path,
+      title: j.title,
+      phase: j.phase,
+      tasks: j.tasks,
+      taskCount: j.taskCount,
+      doneCount: j.doneCount,
+      sessionSlotId: j.phase === 'planning'
+        ? j.frontmatter.planningSessionId
+        : j.frontmatter.executionSessionId,
+    }));
+}
