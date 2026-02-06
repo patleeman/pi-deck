@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useMemo, memo } from 'react';
+import { lazy, Suspense, useMemo, memo } from 'react';
 import type { ChatMessage, MessageContent } from '@pi-web-ui/shared';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useSettings } from '../contexts/SettingsContext';
@@ -247,7 +247,7 @@ const ToolCallDisplayMemo = memo(function ToolCallDisplay({
   };
   previewLines?: number;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const expanded = true;
   const isMobile = useIsMobile();
   const showPulse = !isMobile;
   const headerInfo = formatToolHeader(tool.name, tool.args);
@@ -272,12 +272,20 @@ const ToolCallDisplayMemo = memo(function ToolCallDisplay({
   return (
     <div className="font-mono text-[13px] -mx-4 bg-[#283a28] border-l-2 border-[#b5bd68]">
       {/* Tool header - like TUI: "$ command" or "read path" */}
-      <div 
-        className="px-4 py-3 flex items-start gap-2 cursor-pointer hover:bg-[#2a3f2a]"
-        onClick={() => setExpanded(!expanded)}
-      >
+      <div className="px-4 py-3 flex items-start gap-2">
         <span className="text-[#fff200] font-semibold flex-shrink-0">{prefix}</span>
-        <span className="text-[#00d7ff] whitespace-pre-wrap break-all flex-1">{detail}</span>
+        <span
+          className="text-[#00d7ff] whitespace-pre-wrap break-all flex-1 cursor-pointer hover:underline"
+          onClick={() => {
+            // If the detail looks like a file path, open it in the file pane
+            const path = detail.trim();
+            if (path && (path.startsWith('/') || path.startsWith('./') || path.startsWith('../') || path.includes('/'))) {
+              window.dispatchEvent(new CustomEvent('pi:openFile', { detail: { path } }));
+            }
+          }}
+        >
+          {detail}
+        </span>
         {tool.status === 'running' && showPulse && (
           <span className="text-pi-warning text-[11px] flex-shrink-0 animate-pulse">(running)</span>
         )}

@@ -5,8 +5,10 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve, sep } from 'path';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { unlink } from 'fs/promises';
 import { spawn } from 'child_process';
 import { homedir } from 'os';
+import { SessionManager } from '@mariozechner/pi-coding-agent';
 import { loadConfig } from './config.js';
 import { DirectoryBrowser } from './directory-browser.js';
 import { getWorkspaceManager } from './workspace-manager.js';
@@ -818,6 +820,90 @@ async function handleMessage(
       break;
     }
 
+    case 'renameSession': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const sessionInfo = await resolveSessionInfo(orchestrator, message.sessionId, message.sessionPath);
+      if (!sessionInfo) {
+        send(ws, {
+          type: 'error',
+          workspaceId: message.workspaceId,
+          message: 'Session not found for rename.',
+        });
+        break;
+      }
+      const trimmedName = message.name.trim();
+      if (!trimmedName) {
+        send(ws, {
+          type: 'error',
+          workspaceId: message.workspaceId,
+          message: 'Session name cannot be empty.',
+        });
+        break;
+      }
+      const slotStates = await getSlotStates(orchestrator);
+      const matchingSlots = slotStates.filter(({ state }) => (
+        state.sessionId === sessionInfo.id || state.sessionFile === sessionInfo.path
+      ));
+      if (matchingSlots.length > 0) {
+        for (const { slotId } of matchingSlots) {
+          orchestrator.setSessionName(slotId, trimmedName);
+          send(ws, {
+            type: 'state',
+            workspaceId: message.workspaceId,
+            sessionSlotId: slotId,
+            state: await orchestrator.getState(slotId),
+          });
+        }
+      } else {
+        const sessionManager = SessionManager.open(sessionInfo.path);
+        sessionManager.appendSessionInfo(trimmedName);
+      }
+      scheduleSessionsRefresh(ws, message.workspaceId, orchestrator);
+      break;
+    }
+
+    case 'deleteSession': {
+      const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const sessionInfo = await resolveSessionInfo(orchestrator, message.sessionId, message.sessionPath);
+      if (!sessionInfo) {
+        send(ws, {
+          type: 'error',
+          workspaceId: message.workspaceId,
+          message: 'Session not found for deletion.',
+        });
+        break;
+      }
+      const slotStates = await getSlotStates(orchestrator);
+      const matchingSlots = slotStates.filter(({ state }) => (
+        state.sessionId === sessionInfo.id || state.sessionFile === sessionInfo.path
+      ));
+      if (matchingSlots.length > 0) {
+        for (const { slotId, state } of matchingSlots) {
+          if (state.isStreaming) {
+            await orchestrator.abort(slotId);
+          }
+          await orchestrator.newSession(slotId);
+          send(ws, {
+            type: 'state',
+            workspaceId: message.workspaceId,
+            sessionSlotId: slotId,
+            state: await orchestrator.getState(slotId),
+          });
+          send(ws, {
+            type: 'messages',
+            workspaceId: message.workspaceId,
+            sessionSlotId: slotId,
+            messages: orchestrator.getMessages(slotId),
+          });
+        }
+      }
+      if (existsSync(sessionInfo.path)) {
+        await unlink(sessionInfo.path);
+      }
+      scheduleSessionsRefresh(ws, message.workspaceId, orchestrator);
+      break;
+    }
+
     case 'exportHtml': {
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
@@ -1320,19 +1406,46 @@ async function handleMessage(
       }
 
       const rootPath = resolve(workspace.path);
-      const relativePath = (message.path || '').replace(/^\/+/, '');
-      const targetPath = resolve(rootPath, relativePath);
+      const rawPath = message.path || '';
+      const isAbsolute = rawPath.startsWith('/');
+      let targetPath: string;
+      let displayPath: string;
 
-      if (!relativePath || (targetPath !== rootPath && !targetPath.startsWith(rootPath + sep))) {
-        send(ws, {
-          type: 'workspaceFile',
-          workspaceId: message.workspaceId,
-          path: relativePath,
-          content: '',
-          truncated: false,
-          requestId: message.requestId,
-        });
-        break;
+      if (isAbsolute) {
+        // Absolute path — allow if within workspace or allowed directories
+        targetPath = resolve(rawPath);
+        displayPath = rawPath;
+        const inWorkspace = targetPath.startsWith(rootPath + sep) || targetPath === rootPath;
+        const inAllowed = config.allowedDirectories.some(
+          (dir: string) => targetPath.startsWith(resolve(dir) + sep) || targetPath === resolve(dir)
+        );
+        if (!inWorkspace && !inAllowed) {
+          send(ws, {
+            type: 'workspaceFile',
+            workspaceId: message.workspaceId,
+            path: displayPath,
+            content: '',
+            truncated: false,
+            requestId: message.requestId,
+          });
+          break;
+        }
+      } else {
+        // Relative path — resolve within workspace
+        const relativePath = rawPath.replace(/^\/+/, '');
+        targetPath = resolve(rootPath, relativePath);
+        displayPath = relativePath;
+        if (!relativePath || (targetPath !== rootPath && !targetPath.startsWith(rootPath + sep))) {
+          send(ws, {
+            type: 'workspaceFile',
+            workspaceId: message.workspaceId,
+            path: displayPath,
+            content: '',
+            truncated: false,
+            requestId: message.requestId,
+          });
+          break;
+        }
       }
 
       try {
@@ -1352,7 +1465,7 @@ async function handleMessage(
         send(ws, {
           type: 'workspaceFile',
           workspaceId: message.workspaceId,
-          path: relativePath,
+          path: displayPath,
           content,
           truncated,
           requestId: message.requestId,
@@ -1361,7 +1474,7 @@ async function handleMessage(
         send(ws, {
           type: 'workspaceFile',
           workspaceId: message.workspaceId,
-          path: relativePath,
+          path: displayPath,
           content: '',
           truncated: false,
           requestId: message.requestId,
@@ -1577,6 +1690,21 @@ async function handleMessage(
       }
       const slotId = message.sessionSlotId || 'default';
       workspace.orchestrator.handleCustomUIInput(slotId, message.input);
+      break;
+    }
+
+    case 'questionnaireResponse': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) {
+        console.warn(`[WS] Workspace not found for questionnaireResponse: ${message.workspaceId}`);
+        break;
+      }
+      const slotId = message.sessionSlotId || 'default';
+      workspace.orchestrator.handleQuestionnaireResponse(slotId, {
+        toolCallId: message.toolCallId,
+        answers: message.answers,
+        cancelled: message.cancelled,
+      });
       break;
     }
 
@@ -2048,6 +2176,38 @@ function scheduleSessionsRefresh(
       console.error(`[WS] Failed to refresh sessions for ${workspaceId}:`, error);
     }
   });
+}
+
+async function resolveSessionInfo(
+  orchestrator: SessionOrchestrator,
+  sessionId?: string,
+  sessionPath?: string
+): Promise<{ id: string; path: string } | null> {
+  const sessions = await orchestrator.listSessions();
+  if (sessionPath) {
+    const match = sessions.find((session) => session.path === sessionPath);
+    if (match) return { id: match.id, path: match.path };
+  }
+  if (sessionId) {
+    const matchById = sessions.find((session) => session.id === sessionId);
+    if (matchById) return { id: matchById.id, path: matchById.path };
+  }
+  const slotStates = await getSlotStates(orchestrator);
+  const slotMatch = slotStates.find(({ state }) => (
+    (sessionPath && state.sessionFile === sessionPath) || (sessionId && state.sessionId === sessionId)
+  ));
+  if (slotMatch?.state.sessionFile) {
+    return { id: slotMatch.state.sessionId, path: slotMatch.state.sessionFile };
+  }
+  return null;
+}
+
+async function getSlotStates(orchestrator: SessionOrchestrator) {
+  const slots = orchestrator.listSlots();
+  return Promise.all(slots.map(async (slot) => ({
+    slotId: slot.slotId,
+    state: await orchestrator.getState(slot.slotId),
+  })));
 }
 
 function send(ws: WebSocket, event: WsServerEvent) {
