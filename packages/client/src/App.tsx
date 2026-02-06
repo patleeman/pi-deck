@@ -75,10 +75,30 @@ const findSlotIdByPaneId = (node: PaneLayoutNode, paneId: string): string | null
   return pane?.slotId || null;
 };
 
-interface ForkMessage {
-  entryId: string;
-  text: string;
-}
+const areFileInfosEqual = (left?: FileInfo[], right?: FileInfo[]): boolean => {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((entry, index) => {
+    const other = right[index];
+    return entry.name === other.name
+      && entry.path === other.path
+      && entry.isDirectory === other.isDirectory
+      && entry.gitStatus === other.gitStatus
+      && entry.hasChanges === other.hasChanges;
+  });
+};
+
+const areGitStatusEqual = (
+  left?: Array<{ path: string; status: import('@pi-web-ui/shared').GitFileStatus }>,
+  right?: Array<{ path: string; status: import('@pi-web-ui/shared').GitFileStatus }>
+): boolean => {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((entry, index) => {
+    const other = right[index];
+    return entry.path === other.path && entry.status === other.status;
+  });
+};
 
 function App() {
   const ws = useWorkspaces(WS_URL);
@@ -353,13 +373,19 @@ function App() {
   useEffect(() => {
     const handleWorkspaceEntries = (e: CustomEvent<{ workspaceId: string; path: string; entries: FileInfo[]; requestId?: string }>) => {
       if (e.detail.requestId && !e.detail.requestId.startsWith('workspace-entries:')) return;
-      setWorkspaceEntries(prev => ({
-        ...prev,
-        [e.detail.workspaceId]: {
-          ...(prev[e.detail.workspaceId] || {}),
-          [e.detail.path]: e.detail.entries,
-        },
-      }));
+      setWorkspaceEntries(prev => {
+        const existing = prev[e.detail.workspaceId]?.[e.detail.path];
+        if (areFileInfosEqual(existing, e.detail.entries)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [e.detail.workspaceId]: {
+            ...(prev[e.detail.workspaceId] || {}),
+            [e.detail.path]: e.detail.entries,
+          },
+        };
+      });
       const requested = workspaceEntriesRequestedRef.current[e.detail.workspaceId];
       if (requested) {
         requested.delete(e.detail.path);
@@ -373,13 +399,20 @@ function App() {
   useEffect(() => {
     const handleWorkspaceFile = (e: CustomEvent<{ workspaceId: string; path: string; content: string; truncated?: boolean; requestId?: string }>) => {
       if (e.detail.requestId && !e.detail.requestId.startsWith('workspace-file:')) return;
-      setWorkspaceFileContents(prev => ({
-        ...prev,
-        [e.detail.workspaceId]: {
-          ...(prev[e.detail.workspaceId] || {}),
-          [e.detail.path]: { content: e.detail.content, truncated: Boolean(e.detail.truncated) },
-        },
-      }));
+      setWorkspaceFileContents(prev => {
+        const existing = prev[e.detail.workspaceId]?.[e.detail.path];
+        const nextEntry = { content: e.detail.content, truncated: Boolean(e.detail.truncated) };
+        if (existing && existing.content === nextEntry.content && existing.truncated === nextEntry.truncated) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [e.detail.workspaceId]: {
+            ...(prev[e.detail.workspaceId] || {}),
+            [e.detail.path]: nextEntry,
+          },
+        };
+      });
       const requested = workspaceFileRequestsRef.current[e.detail.workspaceId];
       if (requested) {
         requested.delete(e.detail.path);
@@ -392,10 +425,16 @@ function App() {
 
   useEffect(() => {
     const handleGitStatus = (e: CustomEvent<{ workspaceId: string; files: Array<{ path: string; status: import('@pi-web-ui/shared').GitFileStatus }>; requestId?: string }>) => {
-      setWorkspaceGitStatus(prev => ({
-        ...prev,
-        [e.detail.workspaceId]: e.detail.files,
-      }));
+      setWorkspaceGitStatus(prev => {
+        const existing = prev[e.detail.workspaceId];
+        if (areGitStatusEqual(existing, e.detail.files)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [e.detail.workspaceId]: e.detail.files,
+        };
+      });
     };
 
     window.addEventListener('pi:gitStatus', handleGitStatus as EventListener);
@@ -404,13 +443,19 @@ function App() {
 
   useEffect(() => {
     const handleFileDiff = (e: CustomEvent<{ workspaceId: string; path: string; diff: string; requestId?: string }>) => {
-      setWorkspaceFileDiffs(prev => ({
-        ...prev,
-        [e.detail.workspaceId]: {
-          ...(prev[e.detail.workspaceId] || {}),
-          [e.detail.path]: e.detail.diff,
-        },
-      }));
+      setWorkspaceFileDiffs(prev => {
+        const existing = prev[e.detail.workspaceId]?.[e.detail.path];
+        if (existing === e.detail.diff) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [e.detail.workspaceId]: {
+            ...(prev[e.detail.workspaceId] || {}),
+            [e.detail.path]: e.detail.diff,
+          },
+        };
+      });
     };
 
     window.addEventListener('pi:fileDiff', handleFileDiff as EventListener);

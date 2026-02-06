@@ -4,6 +4,7 @@ import { ArrowUp, ChevronDown, ChevronRight, Folder, FileText, LoaderCircle, Git
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { FileInfo, GitFileStatus, GitStatusFile, ActivePlanState } from '@pi-web-ui/shared';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { PlansPane } from './PlansPane';
 
 // Git status colors matching common IDE conventions
@@ -64,6 +65,7 @@ const DEFAULT_TREE_RATIO = 0.33;
 const MIN_TREE_RATIO = 0.2;
 const MAX_TREE_RATIO = 0.8;
 const AUTO_REFRESH_INTERVAL_MS = 3000;
+const AUTO_REFRESH_IDLE_TIMEOUT_MS = 15000;
 
 interface TreeRow {
   entry: FileInfo;
@@ -278,12 +280,12 @@ export function WorkspaceFilesPane({
     paths.forEach((path) => onRequestEntries(path));
   }, [expandedPaths, onRequestEntries, treeRootPath]);
 
-  useEffect(() => {
-    if (activeTab !== 'files') return;
-    refreshFileTree();
-    const interval = window.setInterval(refreshFileTree, AUTO_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [activeTab, refreshFileTree]);
+  useAutoRefresh({
+    enabled: activeTab === 'files',
+    refresh: refreshFileTree,
+    intervalMs: AUTO_REFRESH_INTERVAL_MS,
+    idleTimeoutMs: AUTO_REFRESH_IDLE_TIMEOUT_MS,
+  });
 
   useEffect(() => {
     if (!selectedPath || entryIndex.has(selectedPath)) return;
@@ -436,19 +438,19 @@ export function WorkspaceFilesPane({
     }
   }, [activeTab, selectedFilePath, selectedFileDiff, onRequestFileDiff]);
 
-  useEffect(() => {
-    if (activeTab !== 'git') return;
+  const refreshGitStatus = useCallback(() => {
     onRequestGitStatus();
+    if (selectedFilePath && selectedFileDiff) {
+      onRequestFileDiff(selectedFilePath);
+    }
+  }, [onRequestGitStatus, onRequestFileDiff, selectedFilePath, selectedFileDiff]);
 
-    const interval = window.setInterval(() => {
-      onRequestGitStatus();
-      if (selectedFilePath && selectedFileDiff) {
-        onRequestFileDiff(selectedFilePath);
-      }
-    }, AUTO_REFRESH_INTERVAL_MS);
-
-    return () => window.clearInterval(interval);
-  }, [activeTab, onRequestGitStatus, onRequestFileDiff, selectedFilePath, selectedFileDiff]);
+  useAutoRefresh({
+    enabled: activeTab === 'git',
+    refresh: refreshGitStatus,
+    intervalMs: AUTO_REFRESH_INTERVAL_MS,
+    idleTimeoutMs: AUTO_REFRESH_IDLE_TIMEOUT_MS,
+  });
 
   const hasRootEntries = Object.prototype.hasOwnProperty.call(entriesByPath, treeRootPath);
   const isRootEmpty = hasRootEntries && (entriesByPath[treeRootPath]?.length ?? 0) === 0;

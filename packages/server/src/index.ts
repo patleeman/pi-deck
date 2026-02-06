@@ -47,6 +47,7 @@ const clientWorkspaces = new Map<WebSocket, Set<string>>();
 
 // Track active plan file content hashes for change detection
 const activePlanHashes = new Map<string, string>();
+const ACTIVE_PLAN_POLL_INTERVAL_MS = 3000;
 
 // Poll active plan files for changes (agent modifying checkboxes)
 setInterval(() => {
@@ -138,7 +139,7 @@ setInterval(() => {
       }
     }
   }
-}, 3000); // Poll every 3 seconds
+}, ACTIVE_PLAN_POLL_INTERVAL_MS); // Poll every 3 seconds
 
 /**
  * Broadcast an event to all clients attached to a specific workspace
