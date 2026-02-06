@@ -263,6 +263,7 @@ const ToolCallDisplayMemo = memo(function ToolCallDisplay({
   const isEditTool = toolName === 'edit';
   const isReadTool = toolName === 'read';
   const isWriteTool = toolName === 'write';
+  const isFileTool = isEditTool || isReadTool || isWriteTool;
   const hasEditDiff = isEditTool && Boolean(args.oldText) && Boolean(args.newText);
   const hasWriteContent = isWriteTool && Boolean(args.content);
   
@@ -274,18 +275,24 @@ const ToolCallDisplayMemo = memo(function ToolCallDisplay({
       {/* Tool header - like TUI: "$ command" or "read path" */}
       <div className="px-4 py-3 flex items-start gap-2">
         <span className="text-[#fff200] font-semibold flex-shrink-0">{prefix}</span>
-        <span
-          className="text-[#00d7ff] whitespace-pre-wrap break-all flex-1 cursor-pointer hover:underline"
-          onClick={() => {
-            // If the detail looks like a file path, open it in the file pane
-            const path = detail.trim();
-            if (path && (path.startsWith('/') || path.startsWith('./') || path.startsWith('../') || path.includes('/'))) {
-              window.dispatchEvent(new CustomEvent('pi:openFile', { detail: { path } }));
-            }
-          }}
-        >
-          {detail}
-        </span>
+        {isFileTool ? (
+          <span
+            className="text-[#00d7ff] whitespace-pre-wrap break-all flex-1 cursor-pointer hover:underline"
+            onClick={() => {
+              // Extract just the file path (strip line range like :10-20)
+              const path = detail.trim().replace(/:\d+.*$/, '');
+              if (path) {
+                window.dispatchEvent(new CustomEvent('pi:openFile', { detail: { path } }));
+              }
+            }}
+          >
+            {detail}
+          </span>
+        ) : (
+          <span className="text-[#00d7ff] whitespace-pre-wrap break-all flex-1">
+            {detail}
+          </span>
+        )}
         {tool.status === 'running' && showPulse && (
           <span className="text-pi-warning text-[11px] flex-shrink-0 animate-pulse">(running)</span>
         )}
