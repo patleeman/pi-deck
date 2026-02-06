@@ -14,7 +14,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.50.7",
+    "@mariozechner/pi-coding-agent": "^0.52.6",
     "@pi-web-ui/shared": "*",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",
