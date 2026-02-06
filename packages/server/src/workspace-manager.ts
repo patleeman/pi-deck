@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { basename } from 'path';
 import { SessionOrchestrator } from './session-orchestrator.js';
-import { isPathAllowed } from './config.js';
+import { canonicalizePath, isPathAllowed } from './config.js';
 import type {
   WorkspaceInfo,
   SessionState,
@@ -54,13 +54,15 @@ export class WorkspaceManager extends EventEmitter {
     bufferedEvents: WsServerEvent[];
     isExisting: boolean;
   }> {
+    const normalizedPath = canonicalizePath(path);
+
     // Security check
-    if (!isPathAllowed(path, this.allowedDirectories)) {
-      throw new Error(`Access denied: ${path} is not within allowed directories`);
+    if (!isPathAllowed(normalizedPath, this.allowedDirectories)) {
+      throw new Error(`Access denied: ${normalizedPath} is not within allowed directories`);
     }
 
     // Check if workspace already exists for this path
-    const existing = this.findWorkspaceByPath(path);
+    const existing = this.findWorkspaceByPath(normalizedPath);
     if (existing) {
       existing.clientCount++;
       
@@ -84,15 +86,15 @@ export class WorkspaceManager extends EventEmitter {
 
     // Create new workspace
     const id = `workspace-${this.nextWorkspaceId++}`;
-    const orchestrator = new SessionOrchestrator(path);
+    const orchestrator = new SessionOrchestrator(normalizedPath);
 
     // Subscribe to orchestrator events
     const unsubscribe = this.subscribeToOrchestrator(id, orchestrator);
 
     const workspace: Workspace = {
       id,
-      path,
-      name: basename(path) || path,
+      path: normalizedPath,
+      name: basename(normalizedPath) || normalizedPath,
       orchestrator,
       unsubscribe,
       clientCount: 1,

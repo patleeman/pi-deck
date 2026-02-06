@@ -1,7 +1,7 @@
 import { readdirSync, statSync, existsSync } from 'fs';
-import { resolve, basename, join } from 'path';
+import { basename, join } from 'path';
 import type { DirectoryEntry } from '@pi-web-ui/shared';
-import { isPathAllowed } from './config.js';
+import { canonicalizePath, isPathAllowed } from './config.js';
 
 export class DirectoryBrowser {
   constructor(private allowedDirectories: string[]) {}
@@ -21,7 +21,7 @@ export class DirectoryBrowser {
    * Browse a directory and return its subdirectories
    */
   browse(path: string): DirectoryEntry[] {
-    const normalizedPath = resolve(path);
+    const normalizedPath = canonicalizePath(path);
 
     // Security check: ensure path is within allowed directories
     if (!isPathAllowed(normalizedPath, this.allowedDirectories)) {

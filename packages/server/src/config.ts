@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
 import { resolve, dirname, join } from 'path';
 
@@ -95,8 +95,19 @@ function loadConfigFromEnv(): Partial<ServerConfig> {
   return config;
 }
 
+const TILDE_PREFIX = /^~(?=\/|$)/;
+
+export function canonicalizePath(input: string): string {
+  const normalized = resolve(input.replace(TILDE_PREFIX, homedir()));
+  try {
+    return realpathSync(normalized);
+  } catch {
+    return normalized;
+  }
+}
+
 function normalizeDirectories(dirs: string[]): string[] {
-  return dirs.map((d) => resolve(d.replace(/^~/, homedir())));
+  return dirs.map((d) => canonicalizePath(d));
 }
 
 export function loadConfig(): ServerConfig {
@@ -116,9 +127,9 @@ export function loadConfig(): ServerConfig {
 }
 
 export function isPathAllowed(path: string, allowedDirectories: string[]): boolean {
-  const normalizedPath = resolve(path);
+  const normalizedPath = canonicalizePath(path);
   return allowedDirectories.some((allowed) => {
-    const normalizedAllowed = resolve(allowed);
+    const normalizedAllowed = canonicalizePath(allowed);
     return normalizedPath === normalizedAllowed || normalizedPath.startsWith(normalizedAllowed + '/');
   });
 }
