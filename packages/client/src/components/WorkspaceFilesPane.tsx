@@ -305,20 +305,25 @@ export function WorkspaceFilesPane({
     idleTimeoutMs: AUTO_REFRESH_IDLE_TIMEOUT_MS,
   });
 
+  // External paths (absolute or ~/) are not in the workspace tree — don't clear them
+  const isExternalSelection = selectedPath.startsWith('/') || selectedPath.startsWith('~/');
+
   useEffect(() => {
+    if (isExternalSelection) return;
     if (!selectedPath || entryIndex.has(selectedPath)) return;
     const parentPath = getParentPath(selectedPath);
     if (!entriesByPath[parentPath]) return;
     setSelectedPath('');
-  }, [entriesByPath, entryIndex, selectedPath]);
+  }, [entriesByPath, entryIndex, selectedPath, isExternalSelection]);
 
   useEffect(() => {
+    if (isExternalSelection) return;
     if (!selectedPath || !treeRootPath) return;
     const isWithinRoot = selectedPath === treeRootPath || selectedPath.startsWith(`${treeRootPath}/`);
     if (!isWithinRoot) {
       setSelectedPath('');
     }
-  }, [selectedPath, treeRootPath]);
+  }, [selectedPath, treeRootPath, isExternalSelection]);
 
   const togglePath = (path: string) => {
     setExpandedPaths((prev) => {
