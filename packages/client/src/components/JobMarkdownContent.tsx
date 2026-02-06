@@ -52,34 +52,19 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
   onToggleTask,
   className = '',
 }: JobMarkdownContentProps) {
-  // Track which source line we're on. We use a line counter that maps
-  // rendered list items back to their source lines by matching text.
-  const tasksByText = useMemo(() => {
-    const map = new Map<string, JobTask[]>();
-    for (const task of tasks) {
-      const existing = map.get(task.text) || [];
-      existing.push(task);
-      map.set(task.text, existing);
-    }
-    return map;
+  // Match rendered task list items to parsed tasks by index order.
+  // The Nth checkbox <li> in the rendered output corresponds to tasks[N].
+  const taskIndexRef = { current: 0 };
+
+  const getNextTask = useCallback((): JobTask | null => {
+    if (taskIndexRef.current >= tasks.length) return null;
+    return tasks[taskIndexRef.current++];
   }, [tasks]);
 
-  // Track consumed tasks to handle duplicate text
-  const consumedTasks = useMemo(() => new Set<number>(), [tasks]);
-
-  const findTaskForText = useCallback((text: string): JobTask | null => {
-    const candidates = tasksByText.get(text);
-    if (!candidates) return null;
-    for (const task of candidates) {
-      if (!consumedTasks.has(task.line)) {
-        consumedTasks.add(task.line);
-        return task;
-      }
-    }
-    return null;
-  }, [tasksByText, consumedTasks]);
-
   const strippedContent = useMemo(() => stripFrontmatter(content), [content]);
+
+  // Reset task index on each render so the Nth checkbox maps to tasks[N]
+  taskIndexRef.current = 0;
 
   const components = useMemo(() => ({
     pre({ children, ...props }: any) {
@@ -183,29 +168,27 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
 
       if (isTaskItem) {
         const checked = findCheckboxChecked(children);
-        const unwrapped = unwrapParagraphs(filterCheckboxInput(children));
-        const textContent = extractText(unwrapped);
-        const task = findTaskForText(textContent.trim());
+        const filtered = filterCheckboxInput(children);
+        const task = getNextTask();
 
         return (
-          <li className="list-none flex items-start gap-2 py-0.5 pl-1" {...props}>
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                if (task) onToggleTask(task);
-              }}
-              className={`flex-shrink-0 mt-[1px] w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+          <li
+            className={`list-none flex items-start gap-2 py-1 px-1.5 rounded hover:bg-pi-bg/50 transition-colors cursor-pointer [&_p]:inline [&_p]:m-0`}
+            onClick={() => { if (task) onToggleTask(task); }}
+          >
+            <span
+              className={`flex-shrink-0 mt-[2px] w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
                 checked
-                  ? 'bg-green-500/20 border-green-500/40 text-green-400'
-                  : 'border-pi-border hover:border-pi-accent'
+                  ? 'bg-green-500/20 border-green-500/50 text-green-400'
+                  : 'border-pi-muted/40 hover:border-pi-accent'
               }`}
             >
-              {checked && <Check className="w-3 h-3" />}
-            </button>
+              {checked && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
+            </span>
             <span className={`text-[13px] sm:text-[12px] flex-1 leading-snug ${
               checked ? 'text-pi-muted line-through' : 'text-pi-text'
             }`}>
-              {unwrapped}
+              {filtered}
             </span>
           </li>
         );
@@ -264,7 +247,7 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
       if (props.type === 'checkbox') return null;
       return <input {...props} />;
     },
-  }), [findTaskForText, onToggleTask]);
+  }), [getNextTask, onToggleTask]);
 
   return (
     <div className={`job-markdown-content text-pi-text text-[14px] sm:text-[13px] leading-relaxed ${className}`}>
@@ -279,33 +262,7 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
 });
 
 /**
- * Extract plain text from React children (for matching against task text).
- */
-function extractText(children: any): string {
-  if (typeof children === 'string') return children;
-  if (Array.isArray(children)) {
-    return children.map(extractText).join('');
-  }
-  if (children?.props?.children) {
-    return extractText(children.props.children);
-  }
-  return '';
-}
-
-/**
- * Unwrap <p> elements from children to prevent block-level elements
- * breaking flex layout inside task list items.
- * Turns [<p>text with <code>code</code></p>] → [text with <code>code</code>]
- */
-function unwrapParagraphs(children: any): any {
-  if (!Array.isArray(children)) {
-    if (children?.type === 'p' || children?.props?.node?.tagName === 'p') {
-      return children.props.children;
-    }
-    return children;
-  }
-  return children.flatMap((child: any) => {
-    if (child?.type === 'p' || child?.props?.node?.tagName === 'p') {
+ * Find the checked state from a checkbox <input> element in children.
       return child.props.children;
     }
     return child;
