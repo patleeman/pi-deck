@@ -142,16 +142,16 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
     },
 
     h1({ children, ...props }: any) {
-      return <h1 className="text-lg font-semibold mb-2 mt-4 first:mt-0 text-pi-text" {...props}>{children}</h1>;
+      return <h1 className="text-[15px] sm:text-[14px] font-semibold mb-2 mt-3 first:mt-0 text-pi-text" {...props}>{children}</h1>;
     },
     h2({ children, ...props }: any) {
-      return <h2 className="text-base font-semibold mb-2 mt-4 first:mt-0 text-pi-text border-b border-pi-border/30 pb-1" {...props}>{children}</h2>;
+      return <h2 className="text-[14px] sm:text-[13px] font-semibold mb-1.5 mt-3 first:mt-0 text-pi-text border-b border-pi-border/30 pb-1" {...props}>{children}</h2>;
     },
     h3({ children, ...props }: any) {
-      return <h3 className="text-[14px] font-semibold mb-1 mt-3 first:mt-0 text-pi-text" {...props}>{children}</h3>;
+      return <h3 className="text-[13px] sm:text-[12px] font-semibold mb-1 mt-2.5 first:mt-0 text-pi-text" {...props}>{children}</h3>;
     },
     h4({ children, ...props }: any) {
-      return <h4 className="text-[13px] font-semibold mb-1 mt-2 first:mt-0 text-pi-muted" {...props}>{children}</h4>;
+      return <h4 className="text-[12px] sm:text-[11px] font-semibold mb-1 mt-2 first:mt-0 text-pi-muted" {...props}>{children}</h4>;
     },
 
     ul({ children, ...props }: any) {
@@ -163,15 +163,20 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
 
     // The key component — list items that may be checkboxes
     li({ children, node, ...props }: any) {
-      // react-markdown with remarkGfm parses `- [x]` / `- [ ]` as task list items
-      // The node has a `checked` property for task list items
-      const checked = node?.properties?.checked;
-      const isTaskItem = checked === true || checked === false;
+      // react-markdown with remarkGfm renders task list items as:
+      //   <li class="task-list-item"><input type="checkbox" checked/> text</li>
+      // The checked state is on the child <input>, NOT on the <li> node.
+      const classNames = node?.properties?.className;
+      const isTaskItem = Array.isArray(classNames)
+        ? classNames.includes('task-list-item')
+        : classNames === 'task-list-item';
 
       if (isTaskItem) {
+        // Find the checkbox input child to determine checked state
+        const checked = findCheckboxChecked(children);
         // Extract the text content to match against our task list
-        const textContent = extractText(children);
-        const task = findTaskForText(textContent);
+        const textContent = extractText(filterCheckboxInput(children));
+        const task = findTaskForText(textContent.trim());
 
         return (
           <li className="list-none flex items-start gap-2 py-0.5" {...props}>
@@ -191,7 +196,6 @@ export const JobMarkdownContent = memo(function JobMarkdownContent({
             <span className={`text-[13px] sm:text-[12px] flex-1 ${
               checked ? 'text-pi-muted line-through' : 'text-pi-text'
             }`}>
-              {/* Render children but skip the default checkbox input */}
               {filterCheckboxInput(children)}
             </span>
           </li>
@@ -280,9 +284,22 @@ function extractText(children: any): string {
 }
 
 /**
- * Filter out the default checkbox <input> element from children.
+ * Find the checked state from a checkbox <input> element in children.
  * react-markdown renders `- [x] text` as <li><input type="checkbox" checked /> text</li>
- * We want to keep the text but use our own checkbox button.
+ */
+function findCheckboxChecked(children: any): boolean {
+  if (!Array.isArray(children)) return false;
+  for (const child of children) {
+    if (child?.type === 'input' && child?.props?.type === 'checkbox') {
+      return child.props.checked === true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Filter out the default checkbox <input> element from children.
+ * We render our own checkbox button instead.
  */
 function filterCheckboxInput(children: any): any {
   if (!Array.isArray(children)) return children;
