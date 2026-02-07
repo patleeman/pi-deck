@@ -493,9 +493,8 @@ export function Pane({
       if (e.detail.sessionSlotId !== pane.sessionSlotId) return;
       
       if (e.detail.success && e.detail.text) {
-        navigator.clipboard.writeText(e.detail.text).then(() => {
-          // Could show a toast notification here
-          console.log('Copied to clipboard');
+        navigator.clipboard.writeText(e.detail.text).catch(() => {
+          // Ignore clipboard failures; caller already has explicit success/error payload.
         });
       } else if (e.detail.error) {
         console.error('Copy failed:', e.detail.error);

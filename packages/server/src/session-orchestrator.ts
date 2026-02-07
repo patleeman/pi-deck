@@ -226,12 +226,7 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   async steer(slotId: string, message: string, images?: ImageAttachment[]): Promise<void> {
-    console.log(`[SessionOrchestrator.steer] slot: ${slotId}, message: "${message?.substring(0, 50)}"`);
-    const session = this.getSession(slotId);
-    console.log(`[SessionOrchestrator.steer] Got session, calling session.steer`);
-    const result = await session.steer(message, images);
-    console.log(`[SessionOrchestrator.steer] session.steer returned`);
-    return result;
+    return this.getSession(slotId).steer(message, images);
   }
 
   async followUp(slotId: string, message: string): Promise<void> {
