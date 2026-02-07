@@ -30,3 +30,7 @@ npm-debug.log*
 
 # Vite
 vite.config.ts.timestamp-*
+
+# Test results
+playwright-report/
+test-results/
