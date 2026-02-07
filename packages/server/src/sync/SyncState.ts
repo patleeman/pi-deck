@@ -6,7 +6,7 @@
  */
 
 import { EventEmitter } from 'events';
-import type { ActiveJobState, ActivePlanState, JobInfo, PaneTabPageState, PlanInfo } from '@pi-web-ui/shared';
+import type { ActiveJobState, ActivePlanState, DirectoryEntry, JobInfo, PaneTabPageState, PlanInfo } from '@pi-web-ui/shared';
 import { SQLiteStore } from './SQLiteStore.js';
 
 // State types (will expand as we implement)
@@ -40,6 +40,12 @@ export interface WorkspaceState {
   rightPaneOpen: boolean;
   paneTabs: PaneTabPageState[];
   activePaneTab: string | null;
+  /** Directory entries for watched paths (file tree) */
+  directoryEntries: Map<string, DirectoryEntry[]>;
+  /** Paths currently being watched */
+  watchedDirectories: Set<string>;
+  /** File watcher statistics */
+  fileWatcherStats: { watchedCount: number; maxWatched: number; isAtLimit: boolean } | null;
   createdAt: number;
   lastModified: number;
 }
@@ -110,6 +116,33 @@ export type StateMutation =
       workspaceId: string;
       slotId: string;
       queuedMessages: { steering: string[]; followUp: string[] };
+    }
+  | {
+      type: 'directoryEntriesUpdate';
+      workspaceId: string;
+      directoryPath: string;
+      entries: DirectoryEntry[];
+    }
+  | {
+      type: 'directoryWatchError';
+      workspaceId: string;
+      directoryPath: string;
+      error: string;
+    }
+  | {
+      type: 'watchedDirectoryAdd';
+      workspaceId: string;
+      directoryPath: string;
+    }
+  | {
+      type: 'watchedDirectoryRemove';
+      workspaceId: string;
+      directoryPath: string;
+    }
+  | {
+      type: 'fileWatcherStatsUpdate';
+      workspaceId: string;
+      stats: { watchedCount: number; maxWatched: number; isAtLimit: boolean };
     };
 
 // Events emitted by SyncState
@@ -309,6 +342,9 @@ export class SyncState extends EventEmitter {
           rightPaneOpen: false,
           paneTabs: [],
           activePaneTab: null,
+          directoryEntries: new Map(),
+          watchedDirectories: new Set(),
+          fileWatcherStats: null,
           createdAt: Date.now(),
           lastModified: Date.now(),
         };
@@ -505,6 +541,48 @@ export class SyncState extends EventEmitter {
         }
         break;
       }
+
+      case 'directoryEntriesUpdate': {
+        const workspace = this.inMemoryState.workspaces.get(mutation.workspaceId);
+        if (workspace) {
+          workspace.directoryEntries.set(mutation.directoryPath, mutation.entries);
+          workspace.lastModified = Date.now();
+        }
+        break;
+      }
+
+      case 'directoryWatchError': {
+        // Error is logged and emitted, but state doesn't change
+        break;
+      }
+
+      case 'watchedDirectoryAdd': {
+        const workspace = this.inMemoryState.workspaces.get(mutation.workspaceId);
+        if (workspace) {
+          workspace.watchedDirectories.add(mutation.directoryPath);
+          workspace.lastModified = Date.now();
+        }
+        break;
+      }
+
+      case 'watchedDirectoryRemove': {
+        const workspace = this.inMemoryState.workspaces.get(mutation.workspaceId);
+        if (workspace) {
+          workspace.watchedDirectories.delete(mutation.directoryPath);
+          workspace.directoryEntries.delete(mutation.directoryPath);
+          workspace.lastModified = Date.now();
+        }
+        break;
+      }
+
+      case 'fileWatcherStatsUpdate': {
+        const workspace = this.inMemoryState.workspaces.get(mutation.workspaceId);
+        if (workspace) {
+          workspace.fileWatcherStats = mutation.stats;
+          workspace.lastModified = Date.now();
+        }
+        break;
+      }
     }
   }
 
@@ -529,6 +607,9 @@ export class SyncState extends EventEmitter {
       jobs: [...state.jobs],
       activeJobs: [...state.activeJobs],
       paneTabs: [...state.paneTabs],
+      directoryEntries: new Map(state.directoryEntries),
+      watchedDirectories: new Set(state.watchedDirectories),
+      fileWatcherStats: state.fileWatcherStats,
     };
   }
 

@@ -68,6 +68,8 @@ interface WorkspaceFilesPaneProps {
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onDemoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
+  onDeleteJob?: (jobPath: string) => void;
+  onRenameJob?: (jobPath: string, newTitle: string) => void;
   onTogglePane: () => void;
   className?: string;
   style?: CSSProperties;
@@ -98,6 +100,8 @@ export function WorkspaceFilesPane({
   onPromoteJob,
   onDemoteJob,
   onUpdateJobTask,
+  onDeleteJob,
+  onRenameJob,
   onTogglePane,
   className = '',
   style,
@@ -198,6 +202,8 @@ export function WorkspaceFilesPane({
             onPromoteJob={onPromoteJob}
             onDemoteJob={onDemoteJob}
             onUpdateJobTask={onUpdateJobTask}
+            onDeleteJob={onDeleteJob}
+            onRenameJob={onRenameJob}
           />
         </div>
       )}

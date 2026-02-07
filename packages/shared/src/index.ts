@@ -446,6 +446,20 @@ export interface WsListWorkspaceEntriesMessage extends WorkspaceScopedMessage {
   requestId?: string;
 }
 
+// Watch directory for file changes (start watching)
+export interface WsWatchDirectoryMessage extends WorkspaceScopedMessage {
+  type: 'watchDirectory';
+  /** Relative path from workspace root */
+  path: string;
+}
+
+// Stop watching directory (stop watching)
+export interface WsUnwatchDirectoryMessage extends WorkspaceScopedMessage {
+  type: 'unwatchDirectory';
+  /** Relative path from workspace root */
+  path: string;
+}
+
 // Workspace file read (for file preview)
 export interface WsReadWorkspaceFileMessage extends WorkspaceScopedMessage {
   type: 'readWorkspaceFile';
@@ -544,6 +558,8 @@ export type WsClientMessage =
   | WsClearQueueMessage
   | WsListFilesMessage
   | WsListWorkspaceEntriesMessage
+  | WsWatchDirectoryMessage
+  | WsUnwatchDirectoryMessage
   | WsReadWorkspaceFileMessage
   | WsGetGitStatusMessage
   | WsGetFileDiffMessage
@@ -567,7 +583,9 @@ export type WsClientMessage =
   | WsSaveJobMessage
   | WsPromoteJobMessage
   | WsDemoteJobMessage
-  | WsUpdateJobTaskMessage;
+  | WsUpdateJobTaskMessage
+  | WsDeleteJobMessage
+  | WsRenameJobMessage;
 
 // ============================================================================
 // WebSocket Messages (Server -> Client)
@@ -1989,6 +2007,19 @@ export interface WsUpdateJobTaskMessage extends WorkspaceScopedMessage {
   line: number;
   /** New done state */
   done: boolean;
+}
+
+/** Delete a job */
+export interface WsDeleteJobMessage extends WorkspaceScopedMessage {
+  type: 'deleteJob';
+  jobPath: string;
+}
+
+/** Rename a job */
+export interface WsRenameJobMessage extends WorkspaceScopedMessage {
+  type: 'renameJob';
+  jobPath: string;
+  newTitle: string;
 }
 
 // ============================================================================

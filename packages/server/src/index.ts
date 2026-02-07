@@ -64,173 +64,6 @@ const clientWorkspaces = new Map<WebSocket, Set<string>>();
 // Route questionnaire responses robustly by toolCallId (survives client/workspace races)
 const pendingQuestionnaireRoutes = new Map<string, { workspaceId: string; slotId: string }>();
 
-// Track active plan file content hashes for change detection
-const activePlanHashes = new Map<string, string>();
-const ACTIVE_PLAN_POLL_INTERVAL_MS = 3000;
-
-// Poll active plan files for changes (agent modifying checkboxes)
-setInterval(() => {
-  for (const [, workspaceIds] of clientWorkspaces.entries()) {
-    for (const workspaceId of workspaceIds) {
-      const workspace = workspaceManager.getWorkspace(workspaceId);
-      if (!workspace) continue;
-      const planPath = uiStateStore.getActivePlan(workspace.path);
-      if (!planPath) continue;
-
-      try {
-        if (!existsSync(planPath)) {
-          // Plan file was deleted while active — auto-deactivate
-          uiStateStore.clearActivePlan(workspace.path);
-          activePlanHashes.delete(`${workspaceId}:${planPath}`);
-          broadcastToWorkspace(workspaceId, {
-            type: 'activePlan',
-            workspaceId,
-            activePlan: null,
-          });
-          syncIntegration.setActivePlan(workspaceId, null);
-          continue;
-        }
-
-        const content = readFileSync(planPath, 'utf-8');
-        const hash = `${content.length}:${content.slice(0, 100)}:${content.slice(-100)}`;
-        const prevHash = activePlanHashes.get(`${workspaceId}:${planPath}`);
-
-        if (prevHash && prevHash !== hash) {
-          // File changed — broadcast updated state
-          const plan = parsePlan(planPath, content);
-          const activePlanState: ActivePlanState = {
-            planPath: plan.path,
-            title: plan.title,
-            tasks: plan.tasks,
-            taskCount: plan.taskCount,
-            doneCount: plan.doneCount,
-          };
-          broadcastToWorkspace(workspaceId, {
-            type: 'activePlan',
-            workspaceId,
-            activePlan: activePlanState,
-          });
-          syncIntegration.setActivePlan(workspaceId, activePlanState);
-
-          // Also broadcast plan content so sidebar task list stays in sync
-          broadcastToWorkspace(workspaceId, {
-            type: 'planContent',
-            workspaceId,
-            planPath,
-            content,
-            plan,
-          });
-
-          // Refresh the plans list (progress bars on list view)
-          const updatedPlans = discoverPlans(workspace.path);
-          broadcastToWorkspace(workspaceId, { type: 'plansList', workspaceId, plans: updatedPlans });
-          syncIntegration.setPlans(workspaceId, updatedPlans);
-
-          // Auto-complete: if all tasks are done, mark plan as complete
-          if (activePlanState && activePlanState.taskCount > 0 && activePlanState.doneCount === activePlanState.taskCount) {
-            try {
-              const completedContent = updateFrontmatterStatus(content, 'complete', {
-                completed: new Date().toISOString(),
-              });
-              writePlan(planPath, completedContent);
-              uiStateStore.clearActivePlan(workspace.path);
-              activePlanHashes.delete(`${workspaceId}:${planPath}`);
-              broadcastToWorkspace(workspaceId, {
-                type: 'activePlan',
-                workspaceId,
-                activePlan: null,
-              });
-              syncIntegration.setActivePlan(workspaceId, null);
-              const plans = discoverPlans(workspace.path);
-              broadcastToWorkspace(workspaceId, { type: 'plansList', workspaceId, plans });
-              syncIntegration.setPlans(workspaceId, plans);
-            } catch {
-              // Continue — plan file may be locked
-            }
-          }
-        }
-        activePlanHashes.set(`${workspaceId}:${planPath}`, hash);
-      } catch (err) {
-        // File read error — deactivate plan gracefully
-        console.warn(`[Plans] Error reading active plan ${planPath}:`, err);
-        uiStateStore.clearActivePlan(workspace.path);
-        activePlanHashes.delete(`${workspaceId}:${planPath}`);
-        broadcastToWorkspace(workspaceId, {
-          type: 'activePlan',
-          workspaceId,
-          activePlan: null,
-        });
-        syncIntegration.setActivePlan(workspaceId, null);
-      }
-    }
-  }
-}, ACTIVE_PLAN_POLL_INTERVAL_MS); // Poll every 3 seconds
-
-// Track active job file content hashes for change detection
-const activeJobHashes = new Map<string, string>();
-const ACTIVE_JOB_POLL_INTERVAL_MS = 3000;
-
-// Poll active job files for changes (agent modifying checkboxes/content)
-setInterval(() => {
-  for (const [, workspaceIds] of clientWorkspaces.entries()) {
-    for (const workspaceId of workspaceIds) {
-      const workspace = workspaceManager.getWorkspace(workspaceId);
-      if (!workspace) continue;
-
-      let activeJobs: ActiveJobState[];
-      try {
-        activeJobs = getActiveJobStates(workspace.path);
-      } catch {
-        continue;
-      }
-
-      if (activeJobs.length === 0) continue;
-
-      let anyChanged = false;
-      for (const aj of activeJobs) {
-        try {
-          if (!existsSync(aj.jobPath)) continue;
-
-          const content = readFileSync(aj.jobPath, 'utf-8');
-          const hash = `${content.length}:${content.slice(0, 100)}:${content.slice(-100)}`;
-          const key = `${workspaceId}:${aj.jobPath}`;
-          const prevHash = activeJobHashes.get(key);
-
-          if (prevHash && prevHash !== hash) {
-            anyChanged = true;
-            // Broadcast updated job content
-            const job = parseJob(aj.jobPath, content);
-            broadcastToWorkspace(workspaceId, {
-              type: 'jobContent',
-              workspaceId,
-              jobPath: aj.jobPath,
-              content,
-              job,
-            });
-          }
-          activeJobHashes.set(key, hash);
-        } catch {
-          // File read error — skip
-        }
-      }
-
-      if (anyChanged) {
-        // Refresh full list and active states
-        const jobs = discoverJobs(workspace.path);
-        broadcastToWorkspace(workspaceId, { type: 'jobsList', workspaceId, jobs });
-        syncIntegration.setJobs(workspaceId, jobs);
-        const activeJobs = getActiveJobStates(workspace.path);
-        broadcastToWorkspace(workspaceId, {
-          type: 'activeJob',
-          workspaceId,
-          activeJobs,
-        });
-        syncIntegration.setActiveJobs(workspaceId, activeJobs);
-      }
-    }
-  }
-}, ACTIVE_JOB_POLL_INTERVAL_MS);
-
 /**
  * Broadcast an event to all clients attached to a specific workspace
  */
@@ -483,6 +316,7 @@ async function handleMessage(
       // Actually close and dispose the workspace
       workspaceManager.closeWorkspace(message.workspaceId);
       syncIntegration.closeWorkspace(message.workspaceId);
+      syncIntegration.stopFileWatching(message.workspaceId);
       break;
     }
 
@@ -1485,6 +1319,39 @@ async function handleMessage(
           requestId: message.requestId,
         });
       }
+      break;
+    }
+
+    // ========================================================================
+    // Directory watching for file tree (Phase 1 of file watcher)
+    // ========================================================================
+    case 'watchDirectory': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+
+      const rootPath = resolve(workspace.path);
+      const relativePath = message.path.replace(/^\/+/, '');
+      const targetPath = resolve(rootPath, relativePath);
+
+      // Security check
+      if (!targetPath.startsWith(rootPath + sep) && targetPath !== rootPath) {
+        break;
+      }
+
+      // Start watching via sync integration
+      syncIntegration.watchDirectory(message.workspaceId, targetPath);
+      break;
+    }
+
+    case 'unwatchDirectory': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+
+      const rootPath = resolve(workspace.path);
+      const relativePath = message.path.replace(/^\/+/, '');
+      const targetPath = resolve(rootPath, relativePath);
+
+      syncIntegration.unwatchDirectory(message.workspaceId, targetPath);
       break;
     }
 

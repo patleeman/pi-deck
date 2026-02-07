@@ -403,6 +403,28 @@ function App() {
     return () => window.removeEventListener('pi:workspaceEntries', handleWorkspaceEntries as EventListener);
   }, []);
 
+  // Handle directory entries updates from file watcher sync
+  useEffect(() => {
+    const handleDirectoryEntries = (e: CustomEvent<{ workspaceId: string; directoryPath: string; entries: FileInfo[] }>) => {
+      setWorkspaceEntries(prev => {
+        const existing = prev[e.detail.workspaceId]?.[e.detail.directoryPath];
+        if (areFileInfosEqual(existing, e.detail.entries)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [e.detail.workspaceId]: {
+            ...(prev[e.detail.workspaceId] || {}),
+            [e.detail.directoryPath]: e.detail.entries,
+          },
+        };
+      });
+    };
+
+    window.addEventListener('pi:directoryEntries', handleDirectoryEntries as EventListener);
+    return () => window.removeEventListener('pi:directoryEntries', handleDirectoryEntries as EventListener);
+  }, []);
+
   useEffect(() => {
     const handleWorkspaceFile = (e: CustomEvent<{ workspaceId: string; path: string; content: string; truncated?: boolean; requestId?: string }>) => {
       if (e.detail.requestId && !e.detail.requestId.startsWith('workspace-file:')) return;
@@ -478,6 +500,17 @@ function App() {
     workspaceEntriesRequestedRef.current[workspaceId] = requested;
     const requestId = `workspace-entries:${workspaceId}:${normalizedPath}:${Date.now()}`;
     ws.listWorkspaceEntries(workspaceId, normalizedPath, requestId);
+  }, [ws]);
+
+  // File watching for expanded directories
+  const watchDirectory = useCallback((workspaceId: string, path: string) => {
+    if (!ws.isConnected) return;
+    ws.watchDirectory(workspaceId, path);
+  }, [ws]);
+
+  const unwatchDirectory = useCallback((workspaceId: string, path: string) => {
+    if (!ws.isConnected) return;
+    ws.unwatchDirectory(workspaceId, path);
   }, [ws]);
 
   const requestWorkspaceFile = useCallback((workspaceId: string, path: string) => {
@@ -1206,6 +1239,19 @@ function App() {
     requestWorkspaceEntries(activeWorkspaceId, '');
   }, [ws.isConnected, activeWorkspaceId, hasRootEntries, isRightPaneOpen, requestWorkspaceEntries]);
 
+  // Memoized handlers for active workspace to prevent re-render loops in SidebarFileTree
+  const activeWorkspaceWatchDirectory = useCallback((path: string) => {
+    if (activeWs) {
+      watchDirectory(activeWs.id, path);
+    }
+  }, [activeWs, watchDirectory]);
+
+  const activeWorkspaceUnwatchDirectory = useCallback((path: string) => {
+    if (activeWs) {
+      unwatchDirectory(activeWs.id, path);
+    }
+  }, [activeWs, unwatchDirectory]);
+
   // Loading state
   if (!ws.isConnected && ws.isConnecting) {
     return (
@@ -1323,6 +1369,8 @@ function App() {
               onSelectGitFile={handleSelectGitFile}
               selectedFilePath={activeWs ? (selectedFilePathByWorkspace[activeWs.id] || '') : ''}
               openFilePath={activeWs ? openFilePathByWorkspace[activeWs.id] : undefined}
+              onWatchDirectory={activeWs ? activeWorkspaceWatchDirectory : undefined}
+              onUnwatchDirectory={activeWs ? activeWorkspaceUnwatchDirectory : undefined}
               className="h-full"
               style={sidebarStyle}
             />
@@ -1510,6 +1558,8 @@ function App() {
               onPromoteJob={ws.promoteJob}
               onDemoteJob={ws.demoteJob}
               onUpdateJobTask={ws.updateJobTask}
+              onDeleteJob={ws.deleteJob}
+              onRenameJob={ws.renameJob}
               onTogglePane={toggleRightPane}
             />
           </>
@@ -1575,6 +1625,8 @@ function App() {
             onPromoteJob={ws.promoteJob}
             onDemoteJob={ws.demoteJob}
             onUpdateJobTask={ws.updateJobTask}
+            onDeleteJob={ws.deleteJob}
+            onRenameJob={ws.renameJob}
             onTogglePane={toggleRightPane}
           />
         </div>

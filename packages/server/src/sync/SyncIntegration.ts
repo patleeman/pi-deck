@@ -1,6 +1,6 @@
 /**
  * Sync Integration Layer
- * 
+ *
  * Bridges the existing event-based architecture with the new sync-based state.
  * This allows gradual migration without rewriting everything at once.
  */
@@ -10,18 +10,40 @@ import type { WebSocket } from 'ws';
 import { SyncManager, type SyncMessage } from './SyncManager.js';
 import type { SessionInfo as SyncSessionInfo } from './SyncState.js';
 import type { ActiveJobState, ActivePlanState, JobInfo, PaneTabPageState, PlanInfo, SessionEvent } from '@pi-web-ui/shared';
+import { ScopedFileWatcher } from './FileWatcher.js';
+import { PlanJobWatcher } from './PlanJobWatcher.js';
 
 export class SyncIntegration extends EventEmitter {
   private syncManager: SyncManager;
   private clientWsMap = new Map<string, WebSocket>();
+  private fileWatchers = new Map<string, ScopedFileWatcher>(); // workspaceId -> watcher
+  private planJobWatcher: PlanJobWatcher;
 
   constructor(dbPath: string) {
     super();
     this.syncManager = new SyncManager(dbPath);
-    
+    this.planJobWatcher = new PlanJobWatcher({ debounceMs: 500 });
+
     // Forward sync events to WebSocket clients
     this.syncManager.on('stateChanged', ({ workspaceId, version, mutation }) => {
       this.emit('syncStateChanged', { workspaceId, version, mutation });
+    });
+
+    // Listen for plan/job changes from watcher
+    this.planJobWatcher.on('plansChanged', ({ workspaceId, plans }) => {
+      this.syncManager.mutate({
+        type: 'plansUpdate',
+        workspaceId,
+        plans,
+      });
+    });
+
+    this.planJobWatcher.on('jobsChanged', ({ workspaceId, jobs }) => {
+      this.syncManager.mutate({
+        type: 'jobsUpdate',
+        workspaceId,
+        jobs,
+      });
     });
   }
 
@@ -238,7 +260,7 @@ export class SyncIntegration extends EventEmitter {
   }
 
   /**
-   * Create workspace in sync state
+   * Create workspace in sync state and start watching plans/jobs.
    */
   createWorkspace(workspaceId: string, path: string): void {
     this.syncManager.mutate({
@@ -246,6 +268,9 @@ export class SyncIntegration extends EventEmitter {
       workspaceId,
       path,
     });
+
+    // Start watching plan/job directories for this workspace
+    this.planJobWatcher.watchWorkspace(workspaceId, path);
   }
 
   /**
@@ -307,13 +332,16 @@ export class SyncIntegration extends EventEmitter {
   }
 
   /**
-   * Mark workspace closed in sync state.
+   * Mark workspace closed in sync state and stop watching plans/jobs.
    */
   closeWorkspace(workspaceId: string): void {
     this.syncManager.mutate({
       type: 'workspaceClose',
       workspaceId,
     });
+
+    // Stop watching plan/job directories
+    this.planJobWatcher.unwatchWorkspace(workspaceId);
   }
 
   private handleClientSyncMessage(clientId: string, message: SyncMessage): void {
@@ -323,7 +351,201 @@ export class SyncIntegration extends EventEmitter {
     }
   }
 
+  /**
+   * Start watching a directory for file changes.
+   * Called when client expands a folder in the file tree.
+   */
+  watchDirectory(workspaceId: string, dirPath: string): void {
+    let watcher = this.fileWatchers.get(workspaceId);
+    if (!watcher) {
+      watcher = new ScopedFileWatcher({ debounceMs: 100, maxWatchedDirs: 50 });
+      this.setupFileWatcherListeners(workspaceId, watcher);
+      this.fileWatchers.set(workspaceId, watcher);
+    }
+
+    // Watch the directory and emit initial state
+    const entries = watcher.watchDirectory(dirPath);
+    if (entries !== null) {
+      // Emit mutation to add to watched directories
+      this.syncManager.mutate({
+        type: 'watchedDirectoryAdd',
+        workspaceId,
+        directoryPath: dirPath,
+      });
+
+      // Emit mutation with current entries
+      this.syncManager.mutate({
+        type: 'directoryEntriesUpdate',
+        workspaceId,
+        directoryPath: dirPath,
+        entries,
+      });
+
+      // Update stats
+      this.syncManager.mutate({
+        type: 'fileWatcherStatsUpdate',
+        workspaceId,
+        stats: watcher.getStats(),
+      });
+    } else {
+      // Directory doesn't exist or can't be watched
+      this.syncManager.mutate({
+        type: 'directoryWatchError',
+        workspaceId,
+        directoryPath: dirPath,
+        error: 'Failed to watch directory - may not exist or insufficient permissions',
+      });
+    }
+  }
+
+  /**
+   * Stop watching a directory.
+   * Called when client collapses a folder in the file tree.
+   */
+  unwatchDirectory(workspaceId: string, dirPath: string): void {
+    const watcher = this.fileWatchers.get(workspaceId);
+    if (watcher) {
+      watcher.unwatchDirectory(dirPath);
+
+      // Emit mutation to remove from watched directories
+      this.syncManager.mutate({
+        type: 'watchedDirectoryRemove',
+        workspaceId,
+        directoryPath: dirPath,
+      });
+
+      // Update stats
+      const stats = watcher.getStats();
+      this.syncManager.mutate({
+        type: 'fileWatcherStatsUpdate',
+        workspaceId,
+        stats,
+      });
+
+      // Clean up if no more watched directories
+      if (watcher.getWatchedPaths().length === 0) {
+        watcher.unwatchAll();
+        this.fileWatchers.delete(workspaceId);
+        // Clear stats when no longer watching
+        this.syncManager.mutate({
+          type: 'fileWatcherStatsUpdate',
+          workspaceId,
+          stats: { watchedCount: 0, maxWatched: 50, isAtLimit: false },
+        });
+      }
+    }
+  }
+
+  /**
+   * Get entries for a directory (without starting a watch).
+   * Used for initial load before client requests watching.
+   */
+  getDirectoryEntries(workspaceId: string, dirPath: string): import('@pi-web-ui/shared').DirectoryEntry[] | null {
+    const watcher = this.fileWatchers.get(workspaceId);
+    if (watcher) {
+      return watcher.getEntries(dirPath);
+    }
+    return null;
+  }
+
+  /**
+   * Get file watcher stats for a workspace.
+   */
+  getFileWatcherStats(workspaceId: string): { watchedCount: number; maxWatched: number; isAtLimit: boolean } | null {
+    const watcher = this.fileWatchers.get(workspaceId);
+    if (watcher) {
+      return watcher.getStats();
+    }
+    return null;
+  }
+
+  /**
+   * Stop all file watching for a workspace.
+   * Called when workspace is closed.
+   */
+  stopFileWatching(workspaceId: string): void {
+    const watcher = this.fileWatchers.get(workspaceId);
+    if (watcher) {
+      watcher.unwatchAll();
+      this.fileWatchers.delete(workspaceId);
+    }
+  }
+
+  private setupFileWatcherListeners(workspaceId: string, watcher: ScopedFileWatcher): void {
+    watcher.on('change', (event) => {
+      // Find which watched directory this change belongs to
+      const watchedPaths = watcher.getWatchedPaths();
+      for (const dirPath of watchedPaths) {
+        if (event.path.startsWith(dirPath + '/') || event.path === dirPath) {
+          // Get updated entries for this directory
+          const entries = watcher.getEntries(dirPath);
+          if (entries !== null) {
+            this.syncManager.mutate({
+              type: 'directoryEntriesUpdate',
+              workspaceId,
+              directoryPath: dirPath,
+              entries,
+            });
+          }
+          break;
+        }
+      }
+    });
+
+    watcher.on('error', ({ path, error }) => {
+      console.error(`[SyncIntegration] File watcher error for ${path}:`, error);
+      this.syncManager.mutate({
+        type: 'directoryWatchError',
+        workspaceId,
+        directoryPath: path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    watcher.on('evicted', ({ path }) => {
+      // Directory was evicted due to LRU limit
+      this.syncManager.mutate({
+        type: 'watchedDirectoryRemove',
+        workspaceId,
+        directoryPath: path,
+      });
+      // Update stats
+      const stats = watcher.getStats();
+      this.syncManager.mutate({
+        type: 'fileWatcherStatsUpdate',
+        workspaceId,
+        stats,
+      });
+    });
+
+    watcher.on('deleted', ({ path }) => {
+      // Directory was deleted - remove from sync state
+      console.log(`[SyncIntegration] Directory deleted: ${path}`);
+      this.syncManager.mutate({
+        type: 'watchedDirectoryRemove',
+        workspaceId,
+        directoryPath: path,
+      });
+      // Clear the entries since directory no longer exists
+      this.syncManager.mutate({
+        type: 'directoryEntriesUpdate',
+        workspaceId,
+        directoryPath: path,
+        entries: [],
+      });
+    });
+  }
+
   dispose(): void {
+    // Clean up all file watchers
+    for (const [workspaceId, watcher] of this.fileWatchers) {
+      watcher.unwatchAll();
+    }
+    this.fileWatchers.clear();
+
+    // Clean up plan/job watcher
+    this.planJobWatcher.unwatchAll();
+
     this.syncManager.dispose();
     this.clientWsMap.clear();
     this.removeAllListeners();

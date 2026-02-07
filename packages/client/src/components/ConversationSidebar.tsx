@@ -28,6 +28,9 @@ interface ConversationSidebarProps {
   onSelectGitFile?: (path: string) => void;
   selectedFilePath?: string;
   openFilePath?: string;
+  // File watching props (for files section)
+  onWatchDirectory?: (path: string) => void;
+  onUnwatchDirectory?: (path: string) => void;
   onCollapseSidebar?: () => void;
   className?: string;
   style?: CSSProperties;
@@ -52,6 +55,8 @@ export function ConversationSidebar({
   onSelectGitFile,
   selectedFilePath,
   openFilePath,
+  onWatchDirectory,
+  onUnwatchDirectory,
   onCollapseSidebar,
   className = '',
   style,
@@ -229,6 +234,8 @@ export function ConversationSidebar({
                 onSelectGitFile={onSelectGitFile!}
                 selectedFilePath={selectedFilePath || ''}
                 openFilePath={openFilePath}
+                onWatchDirectory={onWatchDirectory}
+                onUnwatchDirectory={onUnwatchDirectory}
               />
             </div>
 

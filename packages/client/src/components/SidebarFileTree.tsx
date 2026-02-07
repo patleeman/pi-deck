@@ -121,6 +121,9 @@ interface SidebarFileTreeProps {
   onSelectGitFile: (path: string) => void;
   selectedFilePath: string;
   openFilePath?: string;
+  // New props for file watching (files section only)
+  onWatchDirectory?: (path: string) => void;
+  onUnwatchDirectory?: (path: string) => void;
 }
 
 export function SidebarFileTree({
@@ -135,6 +138,8 @@ export function SidebarFileTree({
   onSelectGitFile,
   selectedFilePath,
   openFilePath,
+  onWatchDirectory,
+  onUnwatchDirectory,
 }: SidebarFileTreeProps) {
   const [treeRootPath, setTreeRootPath] = useState('');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
@@ -200,7 +205,19 @@ export function SidebarFileTree({
 
   const isRootEmpty = (entriesByPath[treeRootPath] || []).length === 0 && treeRootPath === '';
 
-  useEffect(() => { onRequestEntries(treeRootPath); }, [onRequestEntries, treeRootPath]);
+  useEffect(() => {
+    onRequestEntries(treeRootPath);
+    // Start watching the root directory for file changes
+    if (section === 'files' && onWatchDirectory) {
+      onWatchDirectory(treeRootPath);
+    }
+    return () => {
+      // Unwatch when unmounting or changing root
+      if (section === 'files' && onUnwatchDirectory) {
+        onUnwatchDirectory(treeRootPath);
+      }
+    };
+  }, [onRequestEntries, treeRootPath, onWatchDirectory, onUnwatchDirectory, section]);
 
   useAutoRefresh({
     enabled: section === 'git',
@@ -227,21 +244,41 @@ export function SidebarFileTree({
         for (let i = 1; i < parts.length; i++) {
           const ancestorPath = parts.slice(0, i).join('/');
           next.add(ancestorPath);
-          if (!entriesByPath[ancestorPath]) onRequestEntries(ancestorPath);
+          if (!entriesByPath[ancestorPath]) {
+            onRequestEntries(ancestorPath);
+          }
+          // Start watching this directory
+          if (onWatchDirectory) {
+            onWatchDirectory(ancestorPath);
+          }
         }
         return next;
       });
     }
-  }, [section, openFilePath, treeRootPath, workspacePath, entriesByPath, onRequestEntries]);
+  }, [section, openFilePath, treeRootPath, workspacePath, entriesByPath, onRequestEntries, onWatchDirectory]);
 
   const togglePath = useCallback((path: string) => {
     setExpandedPaths(prev => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else { next.add(path); if (!entriesByPath[path]) onRequestEntries(path); }
+      if (next.has(path)) {
+        // Collapsing - unwatch directory
+        next.delete(path);
+        if (section === 'files' && onUnwatchDirectory) {
+          onUnwatchDirectory(path);
+        }
+      } else {
+        // Expanding - request entries and start watching
+        next.add(path);
+        if (!entriesByPath[path]) {
+          onRequestEntries(path);
+        }
+        if (section === 'files' && onWatchDirectory) {
+          onWatchDirectory(path);
+        }
+      }
       return next;
     });
-  }, [entriesByPath, onRequestEntries]);
+  }, [entriesByPath, onRequestEntries, onWatchDirectory, onUnwatchDirectory, section]);
 
   const toggleGitPath = useCallback((path: string) => {
     setGitExpandedPaths(prev => {

@@ -224,6 +224,12 @@ export class SyncManager extends EventEmitter {
       };
     }
 
+    // Convert Maps to objects for serialization
+    const directoryEntries: Record<string, unknown[]> = {};
+    for (const [path, entries] of state.directoryEntries.entries()) {
+      directoryEntries[path] = entries;
+    }
+
     return {
       ...state,
       slots,
@@ -232,6 +238,8 @@ export class SyncManager extends EventEmitter {
       jobs: [...state.jobs],
       activeJobs: [...state.activeJobs],
       paneTabs: [...state.paneTabs],
+      directoryEntries,
+      watchedDirectories: [...state.watchedDirectories],
     };
   }
 }

@@ -195,6 +195,9 @@ export interface UseWorkspacesReturn {
   listFiles: (query?: string, limit?: number, requestId?: string) => void;
   // Workspace directory listing (file tree)
   listWorkspaceEntries: (workspaceId: string, path?: string, requestId?: string) => void;
+  // Workspace directory watching (real-time updates)
+  watchDirectory: (workspaceId: string, path: string) => void;
+  unwatchDirectory: (workspaceId: string, path: string) => void;
   // Workspace file read (file preview)
   readWorkspaceFile: (workspaceId: string, path: string, requestId?: string) => void;
   getGitStatus: (workspaceId: string, requestId?: string) => void;
@@ -270,6 +273,7 @@ interface SyncSnapshotMessage {
     slots?: Record<string, {
       queuedMessages?: { steering?: string[]; followUp?: string[] };
     }>;
+    directoryEntries?: Record<string, DirectoryEntry[]>;
   } | null;
 }
 
@@ -580,6 +584,32 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
         });
         break;
       }
+      case 'directoryEntriesUpdate': {
+        const dirPath = (mutation.directoryPath as string) || '';
+        const entries = (mutation.entries as DirectoryEntry[]) || [];
+        // Dispatch custom event for App.tsx to handle
+        window.dispatchEvent(new CustomEvent('pi:directoryEntries', {
+          detail: { workspaceId, directoryPath: dirPath, entries },
+        }));
+        break;
+      }
+      case 'fileWatcherStatsUpdate': {
+        const stats = mutation.stats as { watchedCount: number; maxWatched: number; isAtLimit: boolean } | undefined;
+        if (stats) {
+          window.dispatchEvent(new CustomEvent('pi:fileWatcherStats', {
+            detail: { workspaceId, stats },
+          }));
+        }
+        break;
+      }
+      case 'watchedDirectoryRemove': {
+        const dirPath = (mutation.directoryPath as string) || '';
+        // Clear entries for unwatched directory
+        window.dispatchEvent(new CustomEvent('pi:directoryEntries', {
+          detail: { workspaceId, directoryPath: dirPath, entries: [] },
+        }));
+        break;
+      }
       default:
         break;
     }
@@ -622,6 +652,13 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           startupInfo: null,
         },
       ]);
+
+      // If this workspace matches the persisted active workspace, activate it
+      // (handles race condition where sync snapshot arrives before workspaceOpened)
+      const activeWorkspacePath = persistedUIStateRef.current?.activeWorkspacePath;
+      if (activeWorkspacePath && workspacePath === activeWorkspacePath) {
+        setActiveWorkspaceId(workspaceId);
+      }
     }
 
     if (state.sessions) {
@@ -638,6 +675,15 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       window.dispatchEvent(new CustomEvent('pi:jobsList', {
         detail: { workspaceId, jobs: state.jobs },
       }));
+    }
+
+    // Load directory entries from snapshot
+    if (state.directoryEntries) {
+      for (const [dirPath, entries] of Object.entries(state.directoryEntries)) {
+        window.dispatchEvent(new CustomEvent('pi:directoryEntries', {
+          detail: { workspaceId, directoryPath: dirPath, entries: entries as DirectoryEntry[] },
+        }));
+      }
     }
 
     if (workspacePath) {
@@ -2132,6 +2178,12 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     // Workspace directory listing (file tree)
     listWorkspaceEntries: (workspaceId: string, path?: string, requestId?: string) =>
       send({ type: 'listWorkspaceEntries', workspaceId, path, requestId }),
+
+    // Workspace directory watching (real-time updates)
+    watchDirectory: (workspaceId: string, path: string) =>
+      send({ type: 'watchDirectory', workspaceId, path }),
+    unwatchDirectory: (workspaceId: string, path: string) =>
+      send({ type: 'unwatchDirectory', workspaceId, path }),
 
     // Workspace file read (file preview)
     readWorkspaceFile: (workspaceId: string, path: string, requestId?: string) =>
