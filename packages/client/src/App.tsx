@@ -676,14 +676,14 @@ function App() {
       }
     }
 
-    // ? - Keyboard shortcuts
-    if ((e.key === '?' || (e.key === '/' && e.shiftKey)) && !isMod) {
-      e.preventDefault();
-      setShowHotkeys(true);
+    if (isTypingTarget && !isMod) {
       return;
     }
 
-    if (isTypingTarget && !isMod) {
+    // ? - Keyboard shortcuts (only when not typing)
+    if ((e.key === '?' || (e.key === '/' && e.shiftKey)) && !isMod) {
+      e.preventDefault();
+      setShowHotkeys(true);
       return;
     }
 
