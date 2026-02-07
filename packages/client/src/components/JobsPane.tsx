@@ -13,9 +13,77 @@ import {
   AlertTriangle,
   X,
 } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { JobInfo, JobPhase, JobTask, ActiveJobState } from '@pi-web-ui/shared';
 import { JOB_PHASE_ORDER } from '@pi-web-ui/shared';
 import { JobMarkdownContent } from './JobMarkdownContent';
+
+const editorTheme = {
+  ...oneDark,
+  'pre[class*="language-"]': {
+    ...oneDark['pre[class*="language-"]'],
+    background: 'transparent',
+    margin: 0,
+    padding: 0,
+    fontSize: '13px',
+    lineHeight: '1.5',
+  },
+  'code[class*="language-"]': {
+    ...oneDark['code[class*="language-"]'],
+    background: 'transparent',
+  },
+};
+
+interface CodeEditorProps {
+  value: string;
+  onChange: (value: string) => void;
+  language?: string;
+}
+
+function CodeEditor({ value, onChange, language = 'markdown' }: CodeEditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = () => {
+    if (!highlightRef.current || !textareaRef.current) return;
+    highlightRef.current.scrollTop = textareaRef.current.scrollTop;
+    highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
+  };
+
+  return (
+    <div className="relative flex-1 min-h-[150px] bg-pi-surface border border-pi-border rounded overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none">
+        <div ref={highlightRef} className="h-full overflow-auto px-3 py-2">
+          <SyntaxHighlighter
+            language={language}
+            style={editorTheme as any}
+            customStyle={{
+              margin: 0,
+              background: 'transparent',
+              padding: 0,
+              fontSize: '13px',
+              lineHeight: '1.5',
+            }}
+            showLineNumbers
+            lineNumberStyle={{ color: '#7d8590', paddingRight: '12px', minWidth: '36px' }}
+          >
+            {value || ' '}
+          </SyntaxHighlighter>
+        </div>
+      </div>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onScroll={handleScroll}
+        spellCheck={false}
+        className="absolute inset-0 w-full h-full bg-transparent text-transparent font-mono text-[13px] leading-relaxed resize-none outline-none px-3 py-2 pl-[52px] whitespace-pre"
+        style={{ caretColor: 'var(--pi-text)' }}
+      />
+    </div>
+  );
+}
 
 interface JobsPaneProps {
   workspaceId: string;
@@ -386,7 +454,14 @@ export function JobsPane({
           >
             <ArrowLeft className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
           </button>
-          <span className="text-[13px] sm:text-[12px] text-pi-text font-medium">New Job</span>
+          <span className="text-[13px] sm:text-[12px] text-pi-text font-medium flex-1">New Job</span>
+          <button
+            onClick={handleCreateJob}
+            disabled={!newTitle.trim()}
+            className="px-3 py-1.5 rounded bg-pi-accent text-white hover:bg-pi-accent/80 transition-colors text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Save
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
           <div>
@@ -406,16 +481,6 @@ export function JobsPane({
             />
           </div>
           <div>
-            <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Description</label>
-            <textarea
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="Describe the task, context, requirements..."
-              className="w-full bg-pi-bg border border-pi-border rounded px-2.5 py-1.5 text-[13px] sm:text-[12px] text-pi-text placeholder-pi-muted/50 focus:outline-none focus:border-pi-accent resize-none leading-relaxed"
-              rows={6}
-            />
-          </div>
-          <div>
             <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Tags</label>
             <input
               type="text"
@@ -426,13 +491,10 @@ export function JobsPane({
             />
             <div className="mt-1 text-[11px] sm:text-[10px] text-pi-muted/70">Comma-separated</div>
           </div>
-          <button
-            onClick={handleCreateJob}
-            disabled={!newTitle.trim()}
-            className="w-full px-3 py-2 sm:py-1.5 rounded bg-pi-accent/20 text-pi-accent hover:bg-pi-accent/30 transition-colors text-[13px] sm:text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Create Job
-          </button>
+          <div className="flex-1 flex flex-col min-h-[200px]">
+            <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Description</label>
+            <CodeEditor value={newDescription} onChange={setNewDescription} />
+          </div>
         </div>
       </div>
     );
@@ -707,13 +769,10 @@ export function JobsPane({
             />
           </div>
         ) : (
-          // Raw editor
-          <textarea
-            value={editorContent}
-            onChange={(e) => handleEditorChange(e.target.value)}
-            className="w-full h-full bg-transparent text-pi-text text-[13px] sm:text-[12px] font-mono p-3 resize-none focus:outline-none leading-relaxed"
-            spellCheck={false}
-          />
+          // Raw editor with line numbers
+          <div className="h-full p-3">
+            <CodeEditor value={editorContent} onChange={handleEditorChange} />
+          </div>
         )}
       </div>
     </div>
