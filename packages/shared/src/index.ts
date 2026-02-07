@@ -1859,6 +1859,7 @@ export const JOB_PHASE_ORDER: JobPhase[] = ['executing', 'planning', 'review', '
 export interface JobFrontmatter {
   title?: string;
   phase?: JobPhase;
+  tags?: string[];
   created?: string;
   updated?: string;
   completedAt?: string;
@@ -1888,6 +1889,8 @@ export interface JobInfo {
   title: string;
   /** Current phase */
   phase: JobPhase;
+  /** Parsed tags from frontmatter */
+  tags: string[];
   /** Parsed frontmatter */
   frontmatter: JobFrontmatter;
   /** Parsed tasks */
@@ -1937,6 +1940,7 @@ export interface WsCreateJobMessage extends WorkspaceScopedMessage {
   type: 'createJob';
   title: string;
   description: string;
+  tags?: string[];
 }
 
 /** Save job content (autosave from editor) */

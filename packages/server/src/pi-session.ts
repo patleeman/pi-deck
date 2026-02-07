@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { existsSync, unlinkSync } from 'fs';
 import {
   createAgentSession,
   AuthStorage,
@@ -113,8 +114,23 @@ export class PiSession extends EventEmitter {
       this.extensionUIContext = null;
     }
     if (this.session) {
+      this.deleteSessionFileIfEmpty(this.session.sessionFile, this.session.messages.length);
       this.session.dispose();
       this.session = null;
+    }
+  }
+
+  private deleteSessionFileIfEmpty(sessionFile: string | undefined, messageCount: number): void {
+    if (!sessionFile || messageCount !== 0) {
+      return;
+    }
+
+    try {
+      if (existsSync(sessionFile)) {
+        unlinkSync(sessionFile);
+      }
+    } catch {
+      // Best effort cleanup only.
     }
   }
 
@@ -522,14 +538,30 @@ export class PiSession extends EventEmitter {
     if (!this.session) {
       throw new Error('Session not initialized');
     }
+
+    const previousSessionFile = this.session.sessionFile;
+    const previousMessageCount = this.session.messages.length;
+
     await this.session.newSession();
+
+    if (previousSessionFile !== this.session.sessionFile) {
+      this.deleteSessionFileIfEmpty(previousSessionFile, previousMessageCount);
+    }
   }
 
   async switchSession(sessionPath: string): Promise<void> {
     if (!this.session) {
       throw new Error('Session not initialized');
     }
+
+    const previousSessionFile = this.session.sessionFile;
+    const previousMessageCount = this.session.messages.length;
+
     await this.session.switchSession(sessionPath);
+
+    if (previousSessionFile !== this.session.sessionFile) {
+      this.deleteSessionFileIfEmpty(previousSessionFile, previousMessageCount);
+    }
   }
 
   async compact(customInstructions?: string): Promise<void> {
@@ -612,6 +644,10 @@ export class PiSession extends EventEmitter {
    */
   isActive(): boolean {
     return this.session?.isStreaming ?? false;
+  }
+
+  getSessionFile(): string | null {
+    return this.session?.sessionFile ?? null;
   }
 
   // ============================================================================

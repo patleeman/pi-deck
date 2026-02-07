@@ -126,6 +126,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
           <div className="text-[12px] text-pi-muted">Questionnaire</div>
           <button
             type="button"
+            data-testid="questionnaire-close"
             aria-label="Close questionnaire"
             onClick={() => onResponse(request.toolCallId, JSON.stringify({ cancelled: true, answers: [] }))}
             className="text-pi-muted hover:text-pi-text text-[16px] leading-none px-1"
@@ -177,6 +178,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
             {currentQuestion.options.map((option, i) => (
               <button
                 key={option.value}
+                data-testid={`question-option-${i}`}
                 onClick={() => handleSelectOption(option.value, false, i + 1, option.label)}
                 className={`flex items-start gap-2 px-3 py-3 sm:px-2 sm:py-1.5 text-left rounded transition-colors ${
                   i === selectedOptionIndex
@@ -196,6 +198,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
             
             {currentQuestion.allowOther !== false && (
               <button
+                data-testid="question-option-other"
                 onClick={() => setShowCustomInput(true)}
                 className={`flex items-center gap-2 px-3 py-3 sm:px-2 sm:py-1.5 text-left rounded transition-colors ${
                   selectedOptionIndex === currentQuestion.options.length

@@ -212,7 +212,7 @@ export interface UseWorkspacesReturn {
   activeJobsByWorkspace: Record<string, import('@pi-web-ui/shared').ActiveJobState[]>;
   getJobs: () => void;
   getJobContent: (jobPath: string) => void;
-  createJob: (title: string, description: string) => void;
+  createJob: (title: string, description: string, tags?: string[]) => void;
   saveJob: (jobPath: string, content: string) => void;
   promoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) => void;
   demoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) => void;
@@ -2216,9 +2216,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'getJobContent', workspaceId, jobPath })
       ),
-    createJob: (title: string, description: string) =>
+    createJob: (title: string, description: string, tags?: string[]) =>
       withActiveWorkspace((workspaceId) =>
-        send({ type: 'createJob', workspaceId, title, description })
+        send({ type: 'createJob', workspaceId, title, description, tags })
       ),
     saveJob: (jobPath: string, content: string) =>
       withActiveWorkspace((workspaceId) =>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useWorkspaces } from '../../src/hooks/useWorkspaces';
 import { MockWebSocket, installMockWebSocket } from '../mocks/websocket';
 import type { SessionState, WorkspaceInfo, StartupInfo, ChatMessage } from '@pi-web-ui/shared';
@@ -193,8 +193,10 @@ describe('Session Lifecycle Integration', () => {
         await vi.advanceTimersByTimeAsync(10);
       });
 
-      const slot = result.current.workspaces[0].slots['default'];
-      expect(slot.streamingThinking).toBe('Let me think about this...');
+      await waitFor(() => {
+        const slot = result.current.workspaces[0].slots['default'];
+        expect(slot.streamingThinking).toBe('Let me think about this...');
+      });
     });
 
     it('receives agentEnd and clears streaming state', async () => {

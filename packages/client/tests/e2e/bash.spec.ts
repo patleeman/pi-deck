@@ -1,27 +1,20 @@
 import { test, expect } from '@playwright/test';
 
+const openHotkeys = async (page: import('@playwright/test').Page) => {
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', shiftKey: true, bubbles: true }));
+  });
+};
+
 test.describe('Bash', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
   });
 
-  test('page loads', async ({ page }) => {
-    await expect(page.locator('body')).toBeVisible();
-  });
-
-  test('hotkeys dialog shows bash command hints', async ({ page }) => {
-    await page.keyboard.press('?');
-    await expect(page.getByText('Keyboard Shortcuts')).toBeVisible();
-    
-    // Should mention ! or bash
-    const content = await page.textContent('body');
-    expect(content).toMatch(/!|bash|command/i);
-  });
-
-  test('hotkeys dialog mentions ! prefix for bash commands', async ({ page }) => {
-    await page.keyboard.press('?');
-    const content = await page.textContent('body');
-    // Should explain ! prefix
-    expect(content).toMatch(/!|run.*command|execute/i);
+  test('shows bash command hints in hotkeys', async ({ page }) => {
+    await openHotkeys(page);
+    await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible();
+    await expect(page.getByText('Run bash & send to LLM')).toBeVisible();
+    await expect(page.getByText('Run bash (no LLM)')).toBeVisible();
   });
 });

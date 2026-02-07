@@ -169,7 +169,11 @@ export function DirectoryBrowser({
   let navIndex = -1;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 md:p-4">
+    <div
+      role="dialog"
+      aria-label="Open Directory"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 md:p-4"
+    >
       <div className="bg-pi-bg border border-pi-border max-w-2xl w-full max-h-[90vh] md:max-h-[80vh] flex flex-col font-mono text-[14px]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-pi-border px-3 md:px-4 py-2">

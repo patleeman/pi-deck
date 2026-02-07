@@ -655,9 +655,15 @@ function App() {
   }, [panes.panes, panes.closePane, ws]);
 
   // Keyboard shortcuts
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: KeyboardEvent | React.KeyboardEvent) => {
     const isMod = e.metaKey || e.ctrlKey;
-    
+    const target = e.target as HTMLElement | null;
+    const isTypingTarget = target ? (
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable
+    ) : false;
+
     // Escape closes modals
     if (e.key === 'Escape') {
       if (showHotkeys) {
@@ -669,14 +675,25 @@ function App() {
         return;
       }
     }
-    
+
+    // ? - Keyboard shortcuts
+    if ((e.key === '?' || (e.key === '/' && e.shiftKey)) && !isMod) {
+      e.preventDefault();
+      setShowHotkeys(true);
+      return;
+    }
+
+    if (isTypingTarget && !isMod) {
+      return;
+    }
+
     // ⌘O - Open directory
     if (e.key === 'o' && isMod) {
       e.preventDefault();
       setShowBrowser(true);
       return;
     }
-    
+
     // ⌘, - Settings
     if (e.key === ',' && isMod) {
       e.preventDefault();
@@ -747,6 +764,17 @@ function App() {
       return;
     }
   }, [showBrowser, showHotkeys, openSettings, toggleRightPane, isMobile, panes, handleClosePane, ws, activeWorkspaceTabs]);
+
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      handleKeyDown(event);
+    };
+
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown);
+    };
+  }, [handleKeyDown]);
 
   // Handle deploy
   const handleDeploy = useCallback(() => {
@@ -1221,8 +1249,7 @@ function App() {
         height: 'var(--viewport-height, 100%)',
         top: 'var(--viewport-offset, 0)',
       } : undefined}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
+
     >
       {/* Directory browser modal */}
       {showBrowser && (

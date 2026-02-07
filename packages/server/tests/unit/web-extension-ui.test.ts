@@ -305,7 +305,7 @@ describe('WebExtensionUIContext', () => {
       });
       
       // Give it time to start
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       expect(receivedTui).toBeDefined();
       expect(receivedTui.requestRender).toBeDefined();
@@ -333,7 +333,7 @@ describe('WebExtensionUIContext', () => {
       });
       
       const promise = ctxWithCustom.custom(factory);
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       expect(factory).toHaveBeenCalledWith(
         expect.any(Object), // tui
@@ -370,7 +370,7 @@ describe('WebExtensionUIContext', () => {
         };
       });
       
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       expect(sendCustomUIStart).toHaveBeenCalled();
       expect(sentEvent.root.type).toBe('container');
@@ -395,7 +395,7 @@ describe('WebExtensionUIContext', () => {
         toNode: () => ({ id: 'test', type: 'container', children: [] }),
       }));
       
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       expect(sendCustomUIStart).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -430,7 +430,7 @@ describe('WebExtensionUIContext', () => {
         };
       });
       
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       // Simulate done being called
       doneCallback!('selected-value');
@@ -462,7 +462,7 @@ describe('WebExtensionUIContext', () => {
         };
       });
       
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       doneCallback!(null);
       await promise;
       
@@ -512,7 +512,7 @@ describe('WebExtensionUIContext', () => {
         };
       });
       
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       // Get sessionId from the start event
       sessionId = sendCustomUIStart.mock.calls[0][0].sessionId;
@@ -551,7 +551,7 @@ describe('WebExtensionUIContext', () => {
         };
       });
       
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
       
       const sessionId = sendCustomUIStart.mock.calls[0][0].sessionId;
       
@@ -682,7 +682,7 @@ describe('WebExtensionUIContext', () => {
         };
       });
 
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 140));
 
       expect(sendQuestionnaireRequest).not.toHaveBeenCalled();
       expect(sendCustomUIStart).toHaveBeenCalled();

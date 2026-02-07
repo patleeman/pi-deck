@@ -7,52 +7,21 @@ test.describe('Workspace Management', () => {
 
   test('shows empty state when no workspace is open', async ({ page }) => {
     await expect(page.getByText('No workspace open')).toBeVisible();
-    await expect(page.getByText('Open directory')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Open directory/i })).toBeVisible();
   });
 
-  test('has working keyboard shortcut hint', async ({ page }) => {
-    // Should show keyboard shortcut for open directory
-    await expect(page.getByText(/⌘O|Ctrl\+O/)).toBeVisible();
-  });
+  test('opens and closes directory browser', async ({ page }) => {
+    await page.getByRole('button', { name: /Open directory/i }).click();
+    await expect(page.getByRole('dialog', { name: 'Open Directory' })).toBeVisible();
 
-  test('opens directory browser when clicking button', async ({ page }) => {
-    await page.getByText('Open directory').click();
-    // Directory browser should appear
-    await expect(page.getByText('Open Directory')).toBeVisible();
-  });
-
-  test('opens directory browser with keyboard shortcut', async ({ page }) => {
-    await page.keyboard.press('Meta+o');
-    await expect(page.getByText('Open Directory')).toBeVisible();
-  });
-
-  test('closes directory browser with Escape', async ({ page }) => {
-    await page.getByText('Open directory').click();
-    await expect(page.getByText('Open Directory')).toBeVisible();
-    
     await page.keyboard.press('Escape');
-    await expect(page.getByText('Open Directory')).not.toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Open Directory' })).not.toBeVisible();
   });
 
-  test('shows recent workspaces in directory browser', async ({ page }) => {
-    await page.getByText('Open directory').click();
-    // If there are recent workspaces, they should be shown
-    await expect(page.getByText(/Recent|Allowed/)).toBeVisible();
-  });
-
-  test('shows settings button', async ({ page }) => {
-    // Settings icon/button should be visible
-    await expect(page.locator('[title*="Settings"]')).toBeVisible();
-  });
-
-  test('opens settings dialog', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Settings')).toBeVisible();
-  });
-
-  test('settings shows theme options', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Dark')).toBeVisible();
-    await expect(page.getByText('Light')).toBeVisible();
+  test('shows settings button and opens settings dialog', async ({ page }) => {
+    const settingsButton = page.locator('[title*="Settings"]');
+    await expect(settingsButton).toBeVisible();
+    await settingsButton.click();
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   });
 });

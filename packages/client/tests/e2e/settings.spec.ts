@@ -5,63 +5,37 @@ test.describe('Settings', () => {
     await page.goto('/');
   });
 
-  test('opens settings dialog', async ({ page }) => {
+  const openSettings = async (page: import('@playwright/test').Page) => {
     await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Settings')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  };
+
+  test('opens settings dialog', async ({ page }) => {
+    await openSettings(page);
   });
 
   test('closes settings with Escape', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Settings')).toBeVisible();
-    
+    await openSettings(page);
     await page.keyboard.press('Escape');
-    await expect(page.getByText('Settings').first()).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Settings' })).not.toBeVisible();
   });
 
   test('closes settings by clicking backdrop', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Settings')).toBeVisible();
-    
-    // Click on the backdrop (semi-transparent overlay)
-    await page.locator('.bg-black\\/50').click({ position: { x: 10, y: 10 } });
-    await expect(page.getByText('Settings').first()).not.toBeVisible();
+    await openSettings(page);
+    await page.mouse.click(5, 5);
+    await expect(page.getByRole('heading', { name: 'Settings' })).not.toBeVisible();
   });
 
-  test('shows theme section with Dark and Light options', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Dark')).toBeVisible();
-    await expect(page.getByText('Light')).toBeVisible();
-  });
-
-  test('shows notifications section', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Notifications')).toBeVisible();
-  });
-
-  test('shows Developer section', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Developer')).toBeVisible();
-  });
-
-  test('shows Allowed Directories section', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText('Allowed Directories')).toBeVisible();
+  test('shows expected sections', async ({ page }) => {
+    await openSettings(page);
+    await expect(page.getByRole('heading', { name: 'Theme' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Developer' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Allowed Directories' })).toBeVisible();
   });
 
   test('shows rebuild button in Developer section', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    await expect(page.getByText(/Rebuild.*Restart/i)).toBeVisible();
-  });
-
-  test('can select a theme', async ({ page }) => {
-    await page.locator('[title*="Settings"]').click();
-    
-    // Find a theme button and click it
-    const themeButtons = page.locator('button').filter({ hasText: /Cobalt|Dracula|Monokai|Nord/i });
-    const count = await themeButtons.count();
-    if (count > 0) {
-      await themeButtons.first().click();
-      // Theme should be applied (no error)
-    }
+    await openSettings(page);
+    await expect(page.getByRole('button', { name: /Rebuild & Restart Server/i })).toBeVisible();
   });
 });

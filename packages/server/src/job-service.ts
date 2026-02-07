@@ -39,6 +39,71 @@ export function getPreviousPhase(current: JobPhase): JobPhase | null {
 // Frontmatter Parsing
 // ============================================================================
 
+function cleanYamlScalar(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function normalizeTags(tags: string[] | undefined): string[] {
+  if (!tags || tags.length === 0) return [];
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawTag of tags) {
+    const tag = rawTag.trim();
+    if (!tag) continue;
+
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    normalized.push(tag);
+  }
+
+  return normalized;
+}
+
+function parseInlineYamlStringArray(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    return trimmed
+      .slice(1, -1)
+      .split(',')
+      .map(cleanYamlScalar)
+      .filter(Boolean);
+  }
+
+  if (trimmed.includes(',')) {
+    return trimmed.split(',').map(cleanYamlScalar).filter(Boolean);
+  }
+
+  return [cleanYamlScalar(trimmed)].filter(Boolean);
+}
+
+function parseYamlListItems(lines: string[], startIndex: number): { items: string[]; endIndex: number } {
+  const items: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const itemMatch = lines[index].match(/^\s*-\s+(.+)\s*$/);
+    if (!itemMatch) break;
+
+    items.push(cleanYamlScalar(itemMatch[1]));
+    index++;
+  }
+
+  return { items, endIndex: index - 1 };
+}
+
 export function parseJobFrontmatter(content: string): { frontmatter: JobFrontmatter; bodyStart: number } {
   const frontmatter: JobFrontmatter = {};
 
@@ -54,9 +119,11 @@ export function parseJobFrontmatter(content: string): { frontmatter: JobFrontmat
   const fmBlock = content.slice(4, endIndex); // skip opening '---\n'
   const lines = fmBlock.split('\n');
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const match = line.match(/^(\w+)\s*:\s*(.*)$/);
     if (!match) continue;
+
     const [, key, rawValue] = match;
     const value = rawValue.trim();
 
@@ -69,6 +136,17 @@ export function parseJobFrontmatter(content: string): { frontmatter: JobFrontmat
           frontmatter.phase = value as JobPhase;
         }
         break;
+      case 'tags': {
+        if (value.length > 0) {
+          frontmatter.tags = normalizeTags(parseInlineYamlStringArray(value));
+          break;
+        }
+
+        const { items, endIndex: consumedEnd } = parseYamlListItems(lines, i + 1);
+        frontmatter.tags = normalizeTags(items);
+        i = Math.max(i, consumedEnd);
+        break;
+      }
       case 'status':
         // Legacy plan compatibility
         if (['draft', 'active', 'complete'].includes(value)) {
@@ -125,6 +203,7 @@ export function parseJob(filePath: string, content: string): JobInfo {
     phase = statusToPhase(frontmatter.status);
   }
 
+  const tags = normalizeTags(frontmatter.tags);
   const doneCount = tasks.filter(t => t.done).length;
   const updatedAt = frontmatter.updated || frontmatter.created || new Date().toISOString();
 
@@ -133,7 +212,11 @@ export function parseJob(filePath: string, content: string): JobInfo {
     fileName,
     title,
     phase,
-    frontmatter,
+    tags,
+    frontmatter: {
+      ...frontmatter,
+      tags,
+    },
     tasks,
     taskCount: tasks.length,
     doneCount,
@@ -145,19 +228,39 @@ export function parseJob(filePath: string, content: string): JobInfo {
 // Frontmatter Update
 // ============================================================================
 
+function formatYamlInlineValue(value: string): string {
+  // Keep simple scalars unquoted for readability
+  if (/^[a-zA-Z0-9._\/-]+$/.test(value)) {
+    return value;
+  }
+
+  return JSON.stringify(value);
+}
+
+function formatFrontmatterValue(value: string | string[]): string {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    return `[${value.map(formatYamlInlineValue).join(', ')}]`;
+  }
+
+  return value;
+}
+
 /**
  * Update or set fields in the YAML frontmatter of a job file.
  * Creates frontmatter if it doesn't exist.
  */
 export function updateJobFrontmatter(
   content: string,
-  updates: Record<string, string | undefined>,
+  updates: Record<string, string | string[] | undefined>,
 ): string {
   if (!content.startsWith('---')) {
     // No frontmatter — prepend it
     const lines = ['---'];
     for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined) lines.push(`${key}: ${value}`);
+      if (value !== undefined) {
+        lines.push(`${key}: ${formatFrontmatterValue(value)}`);
+      }
     }
     lines.push('---', '');
     return lines.join('\n') + content;
@@ -170,11 +273,16 @@ export function updateJobFrontmatter(
 
   for (const [key, value] of Object.entries(updates)) {
     if (value === undefined) continue;
-    const regex = new RegExp(`^${key}\\s*:.*$`, 'm');
+
+    const serializedValue = formatFrontmatterValue(value);
+    const regex = Array.isArray(value)
+      ? new RegExp(`^${key}\\s*:.*(?:\\n\\s*-\\s+.*)*$`, 'm')
+      : new RegExp(`^${key}\\s*:.*$`, 'm');
+
     if (fmBlock.match(regex)) {
-      fmBlock = fmBlock.replace(regex, `${key}: ${value}`);
+      fmBlock = fmBlock.replace(regex, `${key}: ${serializedValue}`);
     } else {
-      fmBlock += `\n${key}: ${value}`;
+      fmBlock += `\n${key}: ${serializedValue}`;
     }
   }
 
@@ -283,7 +391,7 @@ export function writeJob(jobPath: string, content: string): JobInfo {
 /**
  * Create a new job file in the primary jobs directory.
  */
-export function createJob(workspacePath: string, title: string, description: string): { path: string; content: string; job: JobInfo } {
+export function createJob(workspacePath: string, title: string, description: string, tags?: string[]): { path: string; content: string; job: JobInfo } {
   const workspaceName = basename(workspacePath);
   const jobsDir = join(homedir(), 'jobs', workspaceName);
 
@@ -311,10 +419,12 @@ export function createJob(workspacePath: string, title: string, description: str
   }
 
   const isoNow = now.toISOString();
+  const normalizedTags = normalizeTags(tags);
   const content = [
     '---',
     `title: ${title}`,
     'phase: backlog',
+    `tags: ${formatFrontmatterValue(normalizedTags)}`,
     `created: ${isoNow}`,
     `updated: ${isoNow}`,
     '---',

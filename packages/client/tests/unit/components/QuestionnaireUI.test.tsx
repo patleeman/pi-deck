@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuestionnaireUI } from '../../../src/components/QuestionnaireUI';
 import type { QuestionnaireRequest } from '@pi-web-ui/shared';
 
@@ -106,10 +106,9 @@ describe('QuestionnaireUI', () => {
 
   describe('Selection', () => {
     it('highlights first option by default', () => {
-      const { container } = render(<QuestionnaireUI {...defaultProps} />);
-      
-      const buttons = container.querySelectorAll('button');
-      expect(buttons[0]).toHaveClass('bg-pi-surface');
+      render(<QuestionnaireUI {...defaultProps} />);
+
+      expect(screen.getByTestId('question-option-0')).toHaveClass('bg-pi-surface');
     });
 
     it('clicking an option submits response', () => {
@@ -126,13 +125,14 @@ describe('QuestionnaireUI', () => {
   });
 
   describe('Keyboard Navigation', () => {
-    it('ArrowDown moves selection down', () => {
-      const { container } = render(<QuestionnaireUI {...defaultProps} />);
-      
+    it('ArrowDown moves selection down', async () => {
+      render(<QuestionnaireUI {...defaultProps} />);
+
       fireEvent.keyDown(document, { key: 'ArrowDown' });
-      
-      const buttons = container.querySelectorAll('button');
-      expect(buttons[1]).toHaveClass('bg-pi-surface');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('question-option-1')).toHaveClass('bg-pi-surface');
+      });
     });
 
     it('ArrowUp moves selection up', () => {

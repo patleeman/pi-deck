@@ -22,7 +22,7 @@ interface JobsPaneProps {
   activeJobs: ActiveJobState[];
   onGetJobs: () => void;
   onGetJobContent: (jobPath: string) => void;
-  onCreateJob: (title: string, description: string) => void;
+  onCreateJob: (title: string, description: string, tags?: string[]) => void;
   onSaveJob: (jobPath: string, content: string) => void;
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onDemoteJob: (jobPath: string, toPhase?: JobPhase) => void;
@@ -30,6 +30,16 @@ interface JobsPaneProps {
 }
 
 type ViewMode = 'list' | 'detail' | 'editor' | 'create';
+type JobSortMode = 'updated-desc' | 'updated-asc' | 'title-asc' | 'title-desc';
+type JobGroupMode = 'phase' | 'tag' | 'none';
+
+type JobListSection = {
+  id: string;
+  label: string;
+  jobs: JobInfo[];
+  kind: 'phase' | 'tag' | 'all';
+  phase?: JobPhase;
+};
 
 const AUTOSAVE_DELAY_MS = 500;
 
@@ -81,6 +91,44 @@ function getDemoteLabel(phase: JobPhase): string | null {
   }
 }
 
+function parseTagInput(value: string): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+
+  for (const rawTag of value.split(',')) {
+    const tag = rawTag.trim();
+    if (!tag) continue;
+
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    tags.push(tag);
+  }
+
+  return tags;
+}
+
+function sortJobs(items: JobInfo[], mode: JobSortMode): JobInfo[] {
+  const sorted = [...items];
+
+  sorted.sort((a, b) => {
+    switch (mode) {
+      case 'updated-asc':
+        return a.updatedAt.localeCompare(b.updatedAt);
+      case 'title-asc':
+        return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+      case 'title-desc':
+        return b.title.localeCompare(a.title, undefined, { sensitivity: 'base' });
+      case 'updated-desc':
+      default:
+        return b.updatedAt.localeCompare(a.updatedAt);
+    }
+  });
+
+  return sorted;
+}
+
 export function JobsPane({
   workspaceId,
   activeJobs: _activeJobs,
@@ -97,13 +145,18 @@ export function JobsPane({
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editorContent, setEditorContent] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<Set<JobPhase>>(new Set(['complete']));
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['phase:complete']));
   const autosaveTimerRef = useRef<number | null>(null);
   const lastSavedContentRef = useRef<string>('');
 
   // Create form state
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
+  const [newTags, setNewTags] = useState('');
+
+  // List controls
+  const [sortMode, setSortMode] = useState<JobSortMode>('updated-desc');
+  const [groupMode, setGroupMode] = useState<JobGroupMode>('phase');
 
   // Listen for job events
   useEffect(() => {
@@ -228,26 +281,78 @@ export function JobsPane({
 
   const handleCreateJob = useCallback(() => {
     if (!newTitle.trim()) return;
-    onCreateJob(newTitle.trim(), newDescription.trim());
+
+    const tags = parseTagInput(newTags);
+    onCreateJob(newTitle.trim(), newDescription.trim(), tags);
+
     setNewTitle('');
     setNewDescription('');
+    setNewTags('');
     setViewMode('list');
-  }, [newTitle, newDescription, onCreateJob]);
+  }, [newTitle, newDescription, newTags, onCreateJob]);
 
-  const toggleSection = useCallback((phase: JobPhase) => {
-    setCollapsedSections(prev => {
+  const toggleSection = useCallback((sectionId: string) => {
+    setCollapsedSections((prev) => {
       const next = new Set(prev);
-      if (next.has(phase)) {
-        next.delete(phase);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
       } else {
-        next.add(phase);
+        next.add(sectionId);
       }
       return next;
     });
   }, []);
 
-  // Group jobs by phase
-  const groupedJobs = useMemo(() => {
+  const sortedJobs = useMemo(() => sortJobs(jobs, sortMode), [jobs, sortMode]);
+
+  const groupedSections = useMemo<JobListSection[]>(() => {
+    if (groupMode === 'none') {
+      return [{ id: 'all', label: 'All Jobs', jobs: sortedJobs, kind: 'all' }];
+    }
+
+    if (groupMode === 'tag') {
+      const groups = new Map<string, { label: string; jobs: JobInfo[] }>();
+      const untagged: JobInfo[] = [];
+
+      for (const job of sortedJobs) {
+        if (job.tags.length === 0) {
+          untagged.push(job);
+          continue;
+        }
+
+        for (const tag of job.tags) {
+          const key = tag.toLowerCase();
+          const group = groups.get(key);
+          if (group) {
+            group.jobs.push(job);
+            continue;
+          }
+
+          groups.set(key, { label: tag, jobs: [job] });
+        }
+      }
+
+      const sections: JobListSection[] = Array.from(groups.entries())
+        .sort((a, b) => a[1].label.localeCompare(b[1].label, undefined, { sensitivity: 'base' }))
+        .map(([key, group]) => ({
+          id: `tag:${key}`,
+          label: `#${group.label}`,
+          jobs: group.jobs,
+          kind: 'tag',
+        }));
+
+      if (untagged.length > 0) {
+        sections.push({
+          id: 'tag:untagged',
+          label: 'Untagged',
+          jobs: untagged,
+          kind: 'tag',
+        });
+      }
+
+      return sections;
+    }
+
     const groups: Record<JobPhase, JobInfo[]> = {
       executing: [],
       planning: [],
@@ -256,11 +361,19 @@ export function JobsPane({
       backlog: [],
       complete: [],
     };
-    for (const job of jobs) {
+
+    for (const job of sortedJobs) {
       groups[job.phase].push(job);
     }
-    return groups;
-  }, [jobs]);
+
+    return JOB_PHASE_ORDER.map((phase) => ({
+      id: `phase:${phase}`,
+      label: PHASE_LABELS[phase],
+      jobs: groups[phase],
+      kind: 'phase',
+      phase,
+    }));
+  }, [sortedJobs, groupMode]);
 
   // ===== CREATE VIEW =====
   if (viewMode === 'create') {
@@ -302,6 +415,17 @@ export function JobsPane({
               rows={6}
             />
           </div>
+          <div>
+            <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Tags</label>
+            <input
+              type="text"
+              value={newTags}
+              onChange={(e) => setNewTags(e.target.value)}
+              placeholder="frontend, bugfix, perf"
+              className="w-full bg-pi-bg border border-pi-border rounded px-2.5 py-1.5 text-[13px] sm:text-[12px] text-pi-text placeholder-pi-muted/50 focus:outline-none focus:border-pi-accent"
+            />
+            <div className="mt-1 text-[11px] sm:text-[10px] text-pi-muted/70">Comma-separated</div>
+          </div>
           <button
             onClick={handleCreateJob}
             disabled={!newTitle.trim()}
@@ -318,18 +442,51 @@ export function JobsPane({
   if (viewMode === 'list') {
     return (
       <div className="flex flex-col h-full">
-        {/* New job button */}
-        <div className="px-3 py-2 border-b border-pi-border">
-          <button
-            onClick={() => setViewMode('create')}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:py-1 rounded bg-pi-accent/10 text-pi-accent hover:bg-pi-accent/20 transition-colors text-[13px] sm:text-[12px] w-full justify-center"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            New Job
-          </button>
+        {/* Toolbar */}
+        <div className="px-3 py-2 border-b border-pi-border bg-pi-surface/40">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setViewMode('create')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:py-1 rounded bg-pi-accent/10 text-pi-accent hover:bg-pi-accent/20 transition-colors text-[12px] sm:text-[11px]"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Job
+            </button>
+
+            <div className="flex-1" />
+
+            <div className="flex items-center gap-1.5">
+              <label className="text-[11px] text-pi-muted">Sort</label>
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as JobSortMode)}
+                className="px-2 py-1 text-[11px] bg-pi-bg border border-pi-border rounded text-pi-text"
+                aria-label="Sort jobs"
+              >
+                <option value="updated-desc">Updated (newest)</option>
+                <option value="updated-asc">Updated (oldest)</option>
+                <option value="title-asc">Title (A-Z)</option>
+                <option value="title-desc">Title (Z-A)</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <label className="text-[11px] text-pi-muted">Group</label>
+              <select
+                value={groupMode}
+                onChange={(e) => setGroupMode(e.target.value as JobGroupMode)}
+                className="px-2 py-1 text-[11px] bg-pi-bg border border-pi-border rounded text-pi-text"
+                aria-label="Group jobs"
+              >
+                <option value="phase">Phase</option>
+                <option value="tag">Tag</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+          </div>
         </div>
 
-        {jobs.length === 0 ? (
+        {sortedJobs.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-pi-muted px-4">
             <ClipboardList className="w-8 h-8 mb-2 opacity-30" />
             <div className="text-[14px] sm:text-[12px] text-center">No jobs yet</div>
@@ -339,59 +496,70 @@ export function JobsPane({
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
-            {JOB_PHASE_ORDER.map((phase) => {
-              const phaseJobs = groupedJobs[phase];
-              if (phaseJobs.length === 0) return null;
-              const isCollapsed = collapsedSections.has(phase);
-              const colors = PHASE_COLORS[phase];
+            {groupedSections.map((section) => {
+              if (section.jobs.length === 0) return null;
+
+              const isCollapsible = section.kind !== 'all';
+              const isCollapsed = isCollapsible && collapsedSections.has(section.id);
+              const headerColorClass = section.kind === 'phase' && section.phase
+                ? PHASE_COLORS[section.phase].text
+                : 'text-pi-muted';
 
               return (
-                <div key={phase}>
-                  {/* Section header */}
-                  <button
-                    onClick={() => toggleSection(phase)}
-                    className="w-full flex items-center gap-2 px-3 py-2 sm:py-1.5 bg-pi-surface/50 border-b border-pi-border/50 hover:bg-pi-surface transition-colors"
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="w-3 h-3 text-pi-muted flex-shrink-0" />
-                    ) : (
-                      <ChevronDown className="w-3 h-3 text-pi-muted flex-shrink-0" />
-                    )}
-                    <span className={`text-[12px] sm:text-[11px] font-medium ${colors.text}`}>
-                      {PHASE_LABELS[phase]}
-                    </span>
-                    <span className="text-[11px] sm:text-[10px] text-pi-muted">
-                      {phaseJobs.length}
-                    </span>
-                  </button>
-
-                  {/* Job cards */}
-                  {!isCollapsed && phaseJobs.map((job) => (
+                <div key={section.id} className="px-2 py-1">
+                  {isCollapsible && (
                     <button
-                      key={job.path}
-                      onClick={() => handleSelectJob(job)}
-                      className="w-full text-left px-3 py-2.5 sm:py-2 transition-colors hover:bg-pi-bg border-b border-pi-border/30"
+                      onClick={() => toggleSection(section.id)}
+                      className="w-full flex items-center gap-2 px-1.5 py-1 rounded text-left hover:bg-pi-surface/40 transition-colors"
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-[13px] sm:text-[12px] text-pi-text truncate flex-1">
-                          {job.title}
-                        </span>
-                      </div>
-                      {job.taskCount > 0 && (
-                        <div className="mt-1 flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-pi-border/30 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-green-500/60 rounded-full transition-all"
-                              style={{ width: `${(job.doneCount / job.taskCount) * 100}%` }}
-                            />
-                          </div>
-                          <span className="text-[11px] text-pi-muted flex-shrink-0">
-                            {job.doneCount}/{job.taskCount}
-                          </span>
-                        </div>
+                      {isCollapsed ? (
+                        <ChevronRight className="w-3 h-3 text-pi-muted flex-shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-3 h-3 text-pi-muted flex-shrink-0" />
                       )}
+                      <span className={`text-[11px] uppercase tracking-wide font-medium ${headerColorClass}`}>
+                        {section.label}
+                      </span>
+                      <span className="text-[10px] text-pi-muted">{section.jobs.length}</span>
                     </button>
-                  ))}
+                  )}
+
+                  {!isCollapsed && (
+                    <div className="mt-1 space-y-1">
+                      {section.jobs.map((job) => (
+                        <button
+                          key={job.path}
+                          onClick={() => handleSelectJob(job)}
+                          className="w-full text-left px-2.5 py-2 rounded-md bg-pi-surface/20 hover:bg-pi-bg/80 transition-colors"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {groupMode !== 'phase' && <PhaseBadge phase={job.phase} />}
+                            <span className="text-[13px] sm:text-[12px] text-pi-text truncate flex-1">
+                              {job.title}
+                            </span>
+                            {job.taskCount > 0 && (
+                              <span className="text-[10px] text-pi-muted flex-shrink-0">
+                                {job.doneCount}/{job.taskCount}
+                              </span>
+                            )}
+                          </div>
+
+                          {job.tags.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {job.tags.map((tag) => (
+                                <span
+                                  key={`${job.path}-${tag}`}
+                                  className="px-1.5 py-0.5 rounded bg-pi-bg border border-pi-border/60 text-[10px] text-pi-muted"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -421,6 +589,19 @@ export function JobsPane({
         </span>
         {selectedJob && <PhaseBadge phase={selectedJob.phase} />}
       </div>
+
+      {selectedJob && selectedJob.tags.length > 0 && (
+        <div className="px-3 py-1.5 border-b border-pi-border/60 flex flex-wrap gap-1.5">
+          {selectedJob.tags.map((tag) => (
+            <span
+              key={`${selectedJob.path}-${tag}`}
+              className="px-1.5 py-0.5 rounded bg-pi-bg border border-pi-border/70 text-[10px] text-pi-muted"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* View mode toggle + actions */}
       <div className="flex items-center gap-1 px-3 py-1.5 border-b border-pi-border">

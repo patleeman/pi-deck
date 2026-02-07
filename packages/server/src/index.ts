@@ -2111,7 +2111,7 @@ async function handleMessage(
       const workspace = workspaceManager.getWorkspace(message.workspaceId);
       if (!workspace) break;
       try {
-        const { path: jobPath, job } = createJob(workspace.path, message.title, message.description);
+        const { path: jobPath, job } = createJob(workspace.path, message.title, message.description, message.tags);
         broadcastToWorkspace(message.workspaceId, {
           type: 'jobSaved',
           workspaceId: message.workspaceId,

@@ -31,6 +31,8 @@ interface SessionSlot {
   loadedSessionId: string | null;
   /** Pending questionnaire request, if any (for reconnects) */
   pendingQuestionnaireRequest?: { toolCallId: string; questions: QuestionnaireQuestion[] };
+  /** Slot initialization promise (used to avoid races on reconnect/create) */
+  initializationPromise: Promise<void> | null;
 }
 
 /**
@@ -78,10 +80,13 @@ export class SessionOrchestrator extends EventEmitter {
     messages: ChatMessage[];
   }> {
     const id = slotId || `slot-${this.nextSlotId++}`;
-    
+
     // Check if slot already exists
     if (this.slots.has(id)) {
       const slot = this.slots.get(id)!;
+      if (slot.initializationPromise) {
+        await slot.initializationPromise;
+      }
       const state = await slot.session.getState();
       const messages = slot.session.getMessages();
       // Re-send pending questionnaire request if any (for client reconnects),
@@ -105,26 +110,36 @@ export class SessionOrchestrator extends EventEmitter {
 
     // Create a new PiSession for this slot
     const session = new PiSession(this.cwd);
-    
+
     // Subscribe to session events, adding slotId
     const unsubscribe = this.subscribeToSession(id, session);
+
+    const initializationPromise = session.initialize();
 
     const slot: SessionSlot = {
       id,
       session,
       unsubscribe,
       loadedSessionId: null,
+      initializationPromise,
     };
 
     this.slots.set(id, slot);
 
-    // Initialize the session
-    await session.initialize();
+    try {
+      await initializationPromise;
+      slot.initializationPromise = null;
 
-    const state = await session.getState();
-    const messages = session.getMessages();
+      const state = await session.getState();
+      const messages = session.getMessages();
 
-    return { slotId: id, state, messages };
+      return { slotId: id, state, messages };
+    } catch (error) {
+      slot.unsubscribe();
+      slot.session.dispose();
+      this.slots.delete(id);
+      throw error;
+    }
   }
 
   /**
@@ -134,7 +149,11 @@ export class SessionOrchestrator extends EventEmitter {
     if (this.slots.size === 0) {
       await this.createSlot('default');
     }
-    return this.slots.values().next().value!;
+    const slot = this.slots.values().next().value!;
+    if (slot.initializationPromise) {
+      await slot.initializationPromise;
+    }
+    return slot;
   }
 
   /**
@@ -270,7 +289,21 @@ export class SessionOrchestrator extends EventEmitter {
   async listSessions(): Promise<SessionInfo[]> {
     // Sessions list is shared across all slots (they can all load any session)
     const defaultSlot = await this.getDefaultSlot();
-    return defaultSlot.session.listSessions();
+    const sessions = await defaultSlot.session.listSessions();
+
+    // Hide stale empty sessions, but keep empty sessions currently open in a slot.
+    const activeSessionFiles = new Set<string>();
+    for (const slot of this.slots.values()) {
+      if (slot.initializationPromise) {
+        await slot.initializationPromise;
+      }
+      const sessionFile = slot.session.getSessionFile();
+      if (sessionFile) {
+        activeSessionFiles.add(sessionFile);
+      }
+    }
+
+    return sessions.filter((session) => session.messageCount > 0 || activeSessionFiles.has(session.path));
   }
 
   async getAvailableModels(): Promise<ModelInfo[]> {
