@@ -954,108 +954,173 @@ function App() {
     handleDeleteConversation(ws.activeWorkspaceId, sessionId, sessionPath, label);
   }, [handleDeleteConversation, ws.activeWorkspaceId]);
 
-  const sidebarWorkspaces = useMemo(() => ws.workspaces.map((workspace) => {
-    const isActive = workspace.id === ws.activeWorkspaceId;
-    const isStreaming = Object.values(workspace.slots).some((slot) => slot.isStreaming);
-    const tabs = ws.paneTabsByWorkspace[workspace.path] || [];
-    const activeTabForWorkspace = ws.activePaneTabByWorkspace[workspace.path] || tabs[0]?.id || null;
-    const slotMap = slotToTabByWorkspace[workspace.id] || new Map();
+  // Extract conversation data separately to avoid recalculation during streaming
+  // This extracts only the stable data (not streamingText/streamingThinking)
+  const workspaceConversationData = useMemo(() => {
+    const result: Record<string, {
+      sessions: typeof ws.workspaces[0]['sessions'];
+      slots: Record<string, {
+        sessionId: string | undefined;
+        sessionFile: string | undefined;
+        sessionName: string | undefined;
+        isStreaming: boolean;
+        hasMessages: boolean;
+        firstUserMessage: string | undefined;
+        latestTimestamp: number;
+      }>;
+    }> = {};
 
-    const sessionSlotInfo = new Map<string, { slotIds: string[]; isStreaming: boolean }>();
-    Object.entries(workspace.slots).forEach(([slotId, slot]) => {
-      const sessionId = slot.state?.sessionId;
-      if (!sessionId) return;
-      const entry = sessionSlotInfo.get(sessionId) || { slotIds: [], isStreaming: false };
-      entry.slotIds.push(slotId);
-      if (slot.isStreaming) entry.isStreaming = true;
-      sessionSlotInfo.set(sessionId, entry);
-    });
+    ws.workspaces.forEach((workspace) => {
+      const slotData: Record<string, {
+        sessionId: string | undefined;
+        sessionFile: string | undefined;
+        sessionName: string | undefined;
+        isStreaming: boolean;
+        hasMessages: boolean;
+        firstUserMessage: string | undefined;
+        latestTimestamp: number;
+      }> = {};
 
-    const getSlotFirstUserMessage = (slot: (typeof workspace.slots)[string]) => (
-      slot.messages.find((message) => message.role === 'user')?.content
-        ?.find((content) => content.type === 'text')?.text
-    );
+      Object.entries(workspace.slots).forEach(([slotId, slot]) => {
+        const firstUserMessage = slot.messages.find((message) => message.role === 'user')?.content
+          ?.find((content) => content.type === 'text')?.text;
+        
+        const latestTimestamp = slot.messages.length > 0
+          ? slot.messages.reduce((latest, message) => Math.max(latest, message.timestamp ?? 0), 0)
+          : 0;
 
-    const hasSlotConversationContent = (slot: (typeof workspace.slots)[string]) => {
-      if (slot.isStreaming) return true;
-      if (slot.messages.length > 0) return true;
-      return (slot.state?.messageCount ?? 0) > 0;
-    };
-
-    const sessionMap = new Map<string, { sessionId: string; sessionPath?: string; label: string; updatedAt: number }>();
-    workspace.sessions.forEach((session) => {
-      if (session.messageCount <= 0) return;
-      const label = session.name
-        || (session.firstMessage && session.firstMessage !== '(no messages)' ? session.firstMessage : null)
-        || 'Conversation';
-      sessionMap.set(session.id, {
-        sessionId: session.id,
-        sessionPath: session.path,
-        label,
-        updatedAt: session.updatedAt,
-      });
-    });
-
-    Object.entries(workspace.slots).forEach(([, slot]) => {
-      const sessionId = slot.state?.sessionId;
-      if (!sessionId) return;
-      const existing = sessionMap.get(sessionId);
-      if (existing) {
-        if (!existing.sessionPath && slot.state?.sessionFile) {
-          existing.sessionPath = slot.state.sessionFile;
-        }
-        return;
-      }
-
-      if (!hasSlotConversationContent(slot)) return;
-
-      const firstUserMessage = getSlotFirstUserMessage(slot);
-      const label = slot.state?.sessionName
-        || firstUserMessage
-        || 'Conversation';
-      const updatedAt = slot.messages.reduce((latest, message) => Math.max(latest, message.timestamp ?? 0), 0) || Date.now();
-      sessionMap.set(sessionId, {
-        sessionId,
-        sessionPath: slot.state?.sessionFile,
-        label,
-        updatedAt,
-      });
-    });
-
-    const conversations = [...sessionMap.values()]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((session) => {
-        const slotInfo = sessionSlotInfo.get(session.sessionId);
-        const slotId = slotInfo?.slotIds.find((id) => workspace.slots[id]?.isStreaming) || slotInfo?.slotIds[0];
-        const tabInfo = slotId ? slotMap.get(slotId) : null;
-        const isFocused = Boolean(
-          isActive
-          && tabInfo
-          && activeTabForWorkspace
-          && tabInfo.tabId === activeTabForWorkspace
-          && tabInfo.paneId === panes.focusedPaneId
-        );
-        return {
-          sessionId: session.sessionId,
-          sessionPath: session.sessionPath,
-          label: session.label,
-          slotId,
-          isFocused,
-          isStreaming: slotInfo?.isStreaming ?? false,
+        slotData[slotId] = {
+          sessionId: slot.state?.sessionId,
+          sessionFile: slot.state?.sessionFile,
+          sessionName: slot.state?.sessionName,
+          isStreaming: slot.isStreaming,
+          hasMessages: slot.messages.length > 0 || (slot.state?.messageCount ?? 0) > 0,
+          firstUserMessage,
+          latestTimestamp,
         };
       });
 
-    return {
-      id: workspace.id,
-      name: workspace.name,
-      path: workspace.path,
-      isActive,
-      isStreaming,
-      needsAttention: needsAttention.has(workspace.id),
-      panes: [],
-      conversations,
-    };
-  }), [ws.workspaces, ws.activeWorkspaceId, ws.paneTabsByWorkspace, ws.activePaneTabByWorkspace, needsAttention, panes.focusedPaneId, slotToTabByWorkspace]);
+      result[workspace.id] = {
+        sessions: workspace.sessions,
+        slots: slotData,
+      };
+    });
+
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    // Only depend on workspace/slot identity, not streaming content
+    // We use JSON.stringify of key identifiers to detect real changes
+    ws.workspaces.map(w => `${w.id}:${w.sessions.length}:${Object.keys(w.slots).join(',')}`).join('|')
+  ]);
+
+  // Build sidebar data using the extracted conversation data
+  const sidebarWorkspaces = useMemo(() => {
+    return ws.workspaces.map((workspace) => {
+      const isActive = workspace.id === ws.activeWorkspaceId;
+      const isStreaming = Object.values(workspace.slots).some((slot) => slot.isStreaming);
+      const tabs = ws.paneTabsByWorkspace[workspace.path] || [];
+      const activeTabForWorkspace = ws.activePaneTabByWorkspace[workspace.path] || tabs[0]?.id || null;
+      const slotMap = slotToTabByWorkspace[workspace.id] || new Map();
+
+      const convData = workspaceConversationData[workspace.id];
+      if (!convData) {
+        return {
+          id: workspace.id,
+          name: workspace.name,
+          path: workspace.path,
+          isActive,
+          isStreaming,
+          needsAttention: needsAttention.has(workspace.id),
+          panes: [],
+          conversations: [],
+        };
+      }
+
+      // Build session slot info from extracted data
+      const sessionSlotInfo = new Map<string, { slotIds: string[]; isStreaming: boolean }>();
+      Object.entries(convData.slots).forEach(([slotId, slot]) => {
+        if (!slot.sessionId) return;
+        const entry = sessionSlotInfo.get(slot.sessionId) || { slotIds: [], isStreaming: false };
+        entry.slotIds.push(slotId);
+        if (slot.isStreaming) entry.isStreaming = true;
+        sessionSlotInfo.set(slot.sessionId, entry);
+      });
+
+      // Build session map from extracted data
+      const sessionMap = new Map<string, { sessionId: string; sessionPath?: string; label: string; updatedAt: number }>();
+      
+      convData.sessions.forEach((session) => {
+        if (session.messageCount <= 0) return;
+        const label = session.name
+          || (session.firstMessage && session.firstMessage !== '(no messages)' ? session.firstMessage : null)
+          || 'Conversation';
+        sessionMap.set(session.id, {
+          sessionId: session.id,
+          sessionPath: session.path,
+          label,
+          updatedAt: session.updatedAt,
+        });
+      });
+
+      // Add sessions from slots (only those with content)
+      Object.entries(convData.slots).forEach(([, slot]) => {
+        if (!slot.sessionId) return;
+        if (!slot.hasMessages && !slot.isStreaming) return;
+
+        const existing = sessionMap.get(slot.sessionId);
+        if (existing) {
+          if (!existing.sessionPath && slot.sessionFile) {
+            existing.sessionPath = slot.sessionFile;
+          }
+          return;
+        }
+
+        const label = slot.sessionName || slot.firstUserMessage || 'Conversation';
+        sessionMap.set(slot.sessionId, {
+          sessionId: slot.sessionId,
+          sessionPath: slot.sessionFile,
+          label,
+          updatedAt: slot.latestTimestamp || Date.now(),
+        });
+      });
+
+      const conversations = [...sessionMap.values()]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((session) => {
+          const slotInfo = sessionSlotInfo.get(session.sessionId);
+          // Get fresh slot data for isStreaming check (this is fast, just a property access)
+          const slotId = slotInfo?.slotIds.find((id) => workspace.slots[id]?.isStreaming) || slotInfo?.slotIds[0];
+          const tabInfo = slotId ? slotMap.get(slotId) : null;
+          const isFocused = Boolean(
+            isActive
+            && tabInfo
+            && activeTabForWorkspace
+            && tabInfo.tabId === activeTabForWorkspace
+            && tabInfo.paneId === panes.focusedPaneId
+          );
+          return {
+            sessionId: session.sessionId,
+            sessionPath: session.sessionPath,
+            label: session.label,
+            slotId,
+            isFocused,
+            isStreaming: slotInfo?.isStreaming ?? false,
+          };
+        });
+
+      return {
+        id: workspace.id,
+        name: workspace.name,
+        path: workspace.path,
+        isActive,
+        isStreaming,
+        needsAttention: needsAttention.has(workspace.id),
+        panes: [],
+        conversations,
+      };
+    });
+  }, [ws.workspaces, ws.activeWorkspaceId, ws.paneTabsByWorkspace, ws.activePaneTabByWorkspace, needsAttention, panes.focusedPaneId, slotToTabByWorkspace, workspaceConversationData]);
 
   const workspaceRailItems = useMemo(() => ws.workspaces.map((workspace) => ({
     id: workspace.id,

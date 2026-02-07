@@ -290,6 +290,8 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
   const connectionIdRef = useRef(0);
   const pendingStreamingUpdatesRef = useRef<Record<string, { textDelta: string; thinkingDelta: string }>>({});
   const streamingFlushScheduledRef = useRef(false);
+  const lastStreamingFlushTimeRef = useRef(0);
+  const STREAMING_THROTTLE_MS = 50; // Throttle streaming updates to 20fps max
   
   const persistedUIStateRef = useRef<UIState | null>(null);
   const pendingWorkspaceCountRef = useRef(0);
@@ -435,11 +437,25 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     if (streamingFlushScheduledRef.current) return;
     streamingFlushScheduledRef.current = true;
 
-    const schedule = typeof window !== 'undefined' && window.requestAnimationFrame
-      ? window.requestAnimationFrame
-      : (cb: FrameRequestCallback) => window.setTimeout(() => cb(0), 16);
+    const now = Date.now();
+    const timeSinceLastFlush = now - lastStreamingFlushTimeRef.current;
+    const remainingThrottle = Math.max(0, STREAMING_THROTTLE_MS - timeSinceLastFlush);
 
-    schedule(() => flushStreamingUpdates());
+    const flush = () => {
+      lastStreamingFlushTimeRef.current = Date.now();
+      flushStreamingUpdates();
+    };
+
+    if (remainingThrottle === 0) {
+      // Throttle period has passed, use rAF for smooth timing
+      const schedule = typeof window !== 'undefined' && window.requestAnimationFrame
+        ? window.requestAnimationFrame
+        : (cb: FrameRequestCallback) => window.setTimeout(() => cb(0), 16);
+      schedule(flush);
+    } else {
+      // Still within throttle period, schedule for later
+      window.setTimeout(flush, remainingThrottle);
+    }
   }, [flushStreamingUpdates]);
 
   const sendSyncAck = useCallback((version: number | undefined) => {
