@@ -13,6 +13,9 @@ interface StatusBarProps {
   errorCount: number;
   contextPercent?: number;
   isKeyboardVisible?: boolean;
+  message?: string | null;
+  messageType?: 'error' | 'warning' | 'info';
+  onDismissMessage?: () => void;
 }
 
 export function StatusBar({
@@ -24,21 +27,46 @@ export function StatusBar({
   errorCount,
   contextPercent,
   isKeyboardVisible = false,
+  message,
+  messageType = 'info',
+  onDismissMessage,
 }: StatusBarProps) {
   // Hide status bar when keyboard is visible on mobile
   if (isKeyboardVisible) {
     return null;
   }
 
+  const messageColors = {
+    error: 'text-pi-error',
+    warning: 'text-pi-warning',
+    info: 'text-pi-muted',
+  };
+
   return (
     <div 
       className="flex items-center justify-between px-3 py-1.5 border-t border-pi-border text-[12px] text-pi-muted font-mono"
     >
-      {/* Left side: cwd, git branch */}
+      {/* Left side: message, cwd, git branch */}
       <div className="flex items-center gap-5">
-        <span className="truncate max-w-[300px]" title={cwd}>
-          {shortenCwd(cwd)}
-        </span>
+        {message && (
+          <span className={`flex items-center gap-2 ${messageColors[messageType]}`}>
+            [!] {message}
+            {onDismissMessage && (
+              <button
+                onClick={onDismissMessage}
+                className="hover:opacity-70 transition-opacity"
+                title="Dismiss"
+              >
+                ×
+              </button>
+            )}
+          </span>
+        )}
+        {cwd && (
+          <span className="truncate max-w-[300px]" title={cwd}>
+            {shortenCwd(cwd)}
+          </span>
+        )}
         {gitBranch && (
           <span className="text-pi-success flex items-center gap-1">
             {gitBranch}

@@ -1581,18 +1581,19 @@ function App() {
       )}
 
       {/* Status bar */}
-      {activeWs && (
-        <StatusBar
-          cwd={isMobile ? activeWs.name : activeWs.path}
-          gitBranch={gitBranch}
-          gitChangedFiles={gitChangedFiles}
-          runningCount={runningCount}
-          compactingCount={compactingCount}
-          errorCount={0}
-          contextPercent={contextPercent}
-          isKeyboardVisible={isKeyboardVisible}
-        />
-      )}
+      <StatusBar
+        cwd={activeWs ? (isMobile ? activeWs.name : activeWs.path) : ''}
+        gitBranch={gitBranch}
+        gitChangedFiles={gitChangedFiles}
+        runningCount={runningCount}
+        compactingCount={compactingCount}
+        errorCount={0}
+        contextPercent={contextPercent}
+        isKeyboardVisible={isKeyboardVisible}
+        message={ws.statusMessage?.text}
+        messageType={ws.statusMessage?.type}
+        onDismissMessage={ws.dismissStatusMessage}
+      />
     </div>
   );
 }

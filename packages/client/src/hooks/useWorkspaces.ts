@@ -90,6 +90,10 @@ export interface UseWorkspacesReturn {
   isConnecting: boolean;
   error: string | null;
 
+  // Status message (dismissable non-critical errors/notifications)
+  statusMessage: { text: string; type: 'error' | 'warning' | 'info' } | null;
+  dismissStatusMessage: () => void;
+
   // Deploy state
   deployState: DeployState;
 
@@ -207,6 +211,8 @@ export interface UseWorkspacesReturn {
   activatePlan: (planPath: string) => void;
   deactivatePlan: () => void;
   updatePlanTask: (planPath: string, line: number, done: boolean) => void;
+  deletePlan: (planPath: string) => void;
+  renamePlan: (planPath: string, newTitle: string) => void;
 
   // Jobs
   activeJobsByWorkspace: Record<string, import('@pi-web-ui/shared').ActiveJobState[]>;
@@ -217,6 +223,8 @@ export interface UseWorkspacesReturn {
   promoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) => void;
   demoteJob: (jobPath: string, toPhase?: import('@pi-web-ui/shared').JobPhase) => void;
   updateJobTask: (jobPath: string, line: number, done: boolean) => void;
+  deleteJob: (jobPath: string) => void;
+  renameJob: (jobPath: string, newTitle: string) => void;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 52; // Narrow sidebar per mockup
@@ -287,6 +295,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'error' | 'warning' | 'info' } | null>(null);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceState[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
@@ -1823,7 +1832,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     (action: (workspaceId: string) => void) => {
       const wsId = activeWorkspaceIdRef.current;
       if (!wsId) {
-        setError('No active workspace');
+        setStatusMessage({ text: 'No active workspace', type: 'warning' });
         return;
       }
       action(wsId);
@@ -2205,6 +2214,14 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'updatePlanTask', workspaceId, planPath, line, done })
       ),
+    deletePlan: (planPath: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'deletePlan', workspaceId, planPath })
+      ),
+    renamePlan: (planPath: string, newTitle: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'renamePlan', workspaceId, planPath, newTitle })
+      ),
 
     // Jobs
     activeJobsByWorkspace,
@@ -2236,5 +2253,17 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       withActiveWorkspace((workspaceId) =>
         send({ type: 'updateJobTask', workspaceId, jobPath, line, done })
       ),
+    deleteJob: (jobPath: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'deleteJob', workspaceId, jobPath })
+      ),
+    renameJob: (jobPath: string, newTitle: string) =>
+      withActiveWorkspace((workspaceId) =>
+        send({ type: 'renameJob', workspaceId, jobPath, newTitle })
+      ),
+
+    // Status message (dismissable)
+    statusMessage,
+    dismissStatusMessage: () => setStatusMessage(null),
   };
 }

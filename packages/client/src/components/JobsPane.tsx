@@ -12,6 +12,9 @@ import {
   ArrowLeftCircle,
   AlertTriangle,
   X,
+  MoreHorizontal,
+  Trash2,
+  Pencil,
 } from 'lucide-react';
 import type { JobInfo, JobPhase, JobTask, ActiveJobState } from '@pi-web-ui/shared';
 import { JOB_PHASE_ORDER } from '@pi-web-ui/shared';
@@ -28,6 +31,8 @@ interface JobsPaneProps {
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onDemoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
+  onDeleteJob?: (jobPath: string) => void;
+  onRenameJob?: (jobPath: string, newTitle: string) => void;
 }
 
 type ViewMode = 'list' | 'detail' | 'editor' | 'create';
@@ -140,6 +145,8 @@ export function JobsPane({
   onPromoteJob,
   onDemoteJob,
   onUpdateJobTask,
+  onDeleteJob,
+  onRenameJob,
 }: JobsPaneProps) {
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [selectedJob, setSelectedJob] = useState<JobInfo | null>(null);
@@ -149,6 +156,8 @@ export function JobsPane({
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['phase:complete']));
   const autosaveTimerRef = useRef<number | null>(null);
   const lastSavedContentRef = useRef<string>('');
+  const [menuOpenForJob, setMenuOpenForJob] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Create form state
   const [newTitle, setNewTitle] = useState('');
@@ -241,6 +250,35 @@ export function JobsPane({
     }, 10000);
     return () => window.clearInterval(interval);
   }, [onGetJobs]);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpenForJob(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleDeleteJob = useCallback((jobPath: string) => {
+    if (!onDeleteJob) return;
+    const confirmed = window.confirm('Delete this job? This cannot be undone.');
+    if (confirmed) {
+      onDeleteJob(jobPath);
+    }
+    setMenuOpenForJob(null);
+  }, [onDeleteJob]);
+
+  const handleRenameJob = useCallback((jobPath: string, currentTitle: string) => {
+    if (!onRenameJob) return;
+    const newTitle = window.prompt('Rename job:', currentTitle);
+    if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle) {
+      onRenameJob(jobPath, newTitle.trim());
+    }
+    setMenuOpenForJob(null);
+  }, [onRenameJob]);
 
   const handleSelectJob = useCallback((job: JobInfo) => {
     setSelectedJob(job);
@@ -396,7 +434,7 @@ export function JobsPane({
             Save
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 flex flex-col p-3 space-y-3 min-h-0">
           <div>
             <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Title</label>
             <input
@@ -424,9 +462,11 @@ export function JobsPane({
             />
             <div className="mt-1 text-[11px] sm:text-[10px] text-pi-muted/70">Comma-separated</div>
           </div>
-          <div className="flex-1 flex flex-col min-h-[200px]">
+          <div className="flex-1 flex flex-col min-h-0">
             <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Description</label>
-            <CodeMirrorEditor value={newDescription} onChange={setNewDescription} />
+            <div className="flex-1 min-h-0">
+              <CodeMirrorEditor value={newDescription} onChange={setNewDescription} />
+            </div>
           </div>
         </div>
       </div>
@@ -521,38 +561,79 @@ export function JobsPane({
 
                   {!isCollapsed && (
                     <div className="mt-1 space-y-1">
-                      {section.jobs.map((job) => (
-                        <button
-                          key={job.path}
-                          onClick={() => handleSelectJob(job)}
-                          className="w-full text-left px-2.5 py-2 rounded-md bg-pi-surface/20 hover:bg-pi-bg/80 transition-colors"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            {groupMode !== 'phase' && <PhaseBadge phase={job.phase} />}
-                            <span className="text-[13px] sm:text-[12px] text-pi-text truncate flex-1">
-                              {job.title}
-                            </span>
-                            {job.taskCount > 0 && (
-                              <span className="text-[10px] text-pi-muted flex-shrink-0">
-                                {job.doneCount}/{job.taskCount}
-                              </span>
-                            )}
-                          </div>
-
-                          {job.tags.length > 0 && (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {job.tags.map((tag) => (
-                                <span
-                                  key={`${job.path}-${tag}`}
-                                  className="px-1.5 py-0.5 rounded bg-pi-bg border border-pi-border/60 text-[10px] text-pi-muted"
-                                >
-                                  {tag}
+                      {section.jobs.map((job) => {
+                        const isMenuOpen = menuOpenForJob === job.path;
+                        return (
+                          <div
+                            key={job.path}
+                            className="group flex items-center justify-between px-2.5 py-2 rounded-md bg-pi-surface/20 hover:bg-pi-bg/80 transition-colors"
+                          >
+                            <button
+                              onClick={() => handleSelectJob(job)}
+                              className="flex-1 text-left"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {groupMode !== 'phase' && <PhaseBadge phase={job.phase} />}
+                                <span className="text-[13px] sm:text-[12px] text-pi-text truncate flex-1">
+                                  {job.title}
                                 </span>
-                              ))}
+                                {job.taskCount > 0 && (
+                                  <span className="text-[10px] text-pi-muted flex-shrink-0">
+                                    {job.doneCount}/{job.taskCount}
+                                  </span>
+                                )}
+                              </div>
+
+                              {job.tags.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {job.tags.map((tag) => (
+                                    <span
+                                      key={`${job.path}-${tag}`}
+                                      className="px-1.5 py-0.5 rounded bg-pi-bg border border-pi-border/60 text-[10px] text-pi-muted"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </button>
+                            <div className="relative" ref={isMenuOpen ? menuRef : undefined}>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMenuOpenForJob(isMenuOpen ? null : job.path);
+                                }}
+                                className="p-1.5 text-pi-muted hover:text-pi-text rounded transition-colors opacity-0 group-hover:opacity-100"
+                                title="More actions"
+                              >
+                                <MoreHorizontal className="w-4 h-4" />
+                              </button>
+                              {isMenuOpen && (
+                                <div className="absolute right-0 top-full mt-1 z-10 min-w-[120px] bg-pi-surface border border-pi-border rounded shadow-lg">
+                                  {onRenameJob && (
+                                    <button
+                                      onClick={() => handleRenameJob(job.path, job.title)}
+                                      className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-pi-text hover:bg-pi-bg transition-colors"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                      Rename
+                                    </button>
+                                  )}
+                                  {onDeleteJob && (
+                                    <button
+                                      onClick={() => handleDeleteJob(job.path)}
+                                      className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-red-400 hover:bg-red-500/10 transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </button>
-                      ))}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -691,10 +772,10 @@ export function JobsPane({
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0">
         {viewMode === 'detail' ? (
           // Rich markdown view with interactive checkboxes
-          <div className="p-3">
+          <div className="h-full overflow-y-auto p-3">
             <JobMarkdownContent
               content={editorContent}
               onToggleTask={handleToggleTask}

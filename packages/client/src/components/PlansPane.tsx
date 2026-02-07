@@ -7,6 +7,9 @@ import {
   Edit3,
   ArrowLeft,
   AlertTriangle,
+  MoreHorizontal,
+  Trash2,
+  Pencil,
 } from 'lucide-react';
 import type { PlanInfo, PlanTask, ActivePlanState } from '@pi-web-ui/shared';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
@@ -20,6 +23,8 @@ interface PlansPaneProps {
   onActivatePlan: (planPath: string) => void;
   onDeactivatePlan: () => void;
   onUpdatePlanTask: (planPath: string, line: number, done: boolean) => void;
+  onDeletePlan?: (planPath: string) => void;
+  onRenamePlan?: (planPath: string, newTitle: string) => void;
 }
 
 type ViewMode = 'list' | 'structured' | 'editor';
@@ -35,6 +40,8 @@ export function PlansPane({
   onActivatePlan,
   onDeactivatePlan,
   onUpdatePlanTask,
+  onDeletePlan,
+  onRenamePlan,
 }: PlansPaneProps) {
   const [plans, setPlans] = useState<PlanInfo[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<PlanInfo | null>(null);
@@ -43,6 +50,8 @@ export function PlansPane({
   const [error, setError] = useState<string | null>(null);
   const autosaveTimerRef = useRef<number | null>(null);
   const lastSavedContentRef = useRef<string>('');
+  const [menuOpenForPlan, setMenuOpenForPlan] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Listen for plan events
   useEffect(() => {
@@ -165,6 +174,35 @@ export function PlansPane({
     onDeactivatePlan();
   }, [onDeactivatePlan]);
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpenForPlan(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleDeletePlan = useCallback((planPath: string) => {
+    if (!onDeletePlan) return;
+    const confirmed = window.confirm('Delete this plan? This cannot be undone.');
+    if (confirmed) {
+      onDeletePlan(planPath);
+    }
+    setMenuOpenForPlan(null);
+  }, [onDeletePlan]);
+
+  const handleRenamePlan = useCallback((planPath: string, currentTitle: string) => {
+    if (!onRenamePlan) return;
+    const newTitle = window.prompt('Rename plan:', currentTitle);
+    if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle) {
+      onRenamePlan(planPath, newTitle.trim());
+    }
+    setMenuOpenForPlan(null);
+  }, [onRenamePlan]);
+
   const statusBadge = (status: string) => {
     switch (status) {
       case 'active':
@@ -192,34 +230,73 @@ export function PlansPane({
           <div className="flex-1 overflow-y-auto py-1">
             {plans.map((plan) => {
               const isActivePlan = activePlan?.planPath === plan.path;
+              const isMenuOpen = menuOpenForPlan === plan.path;
               return (
-                <button
+                <div
                   key={plan.path}
-                  onClick={() => handleSelectPlan(plan)}
-                  className={`w-full text-left px-3 py-2.5 sm:py-2 transition-colors hover:bg-pi-bg border-b border-pi-border/50 ${
+                  className={`group flex items-center justify-between px-3 py-2.5 sm:py-2 transition-colors hover:bg-pi-bg border-b border-pi-border/50 ${
                     isActivePlan ? 'bg-green-500/5' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[14px] sm:text-[13px] text-pi-text truncate flex-1">
-                      {plan.title}
-                    </span>
-                    {statusBadge(plan.status)}
-                  </div>
-                  {plan.taskCount > 0 && (
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="flex-1 h-1.5 bg-pi-border/30 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-green-500/60 rounded-full transition-all"
-                          style={{ width: `${(plan.doneCount / plan.taskCount) * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-[11px] text-pi-muted flex-shrink-0">
-                        {plan.doneCount}/{plan.taskCount}
+                  <button
+                    onClick={() => handleSelectPlan(plan)}
+                    className="flex-1 text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[14px] sm:text-[13px] text-pi-text truncate flex-1">
+                        {plan.title}
                       </span>
+                      {statusBadge(plan.status)}
                     </div>
-                  )}
-                </button>
+                    {plan.taskCount > 0 && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-pi-border/30 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-green-500/60 rounded-full transition-all"
+                            style={{ width: `${(plan.doneCount / plan.taskCount) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-[11px] text-pi-muted flex-shrink-0">
+                          {plan.doneCount}/{plan.taskCount}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                  <div className="relative" ref={isMenuOpen ? menuRef : undefined}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenForPlan(isMenuOpen ? null : plan.path);
+                      }}
+                      className="p-1.5 text-pi-muted hover:text-pi-text rounded transition-colors opacity-0 group-hover:opacity-100"
+                      title="More actions"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                    {isMenuOpen && (
+                      <div className="absolute right-0 top-full mt-1 z-10 min-w-[120px] bg-pi-surface border border-pi-border rounded shadow-lg">
+                        {onRenamePlan && (
+                          <button
+                            onClick={() => handleRenamePlan(plan.path, plan.title)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-pi-text hover:bg-pi-bg transition-colors"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Rename
+                          </button>
+                        )}
+                        {onDeletePlan && (
+                          <button
+                            onClick={() => handleDeletePlan(plan.path)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-red-400 hover:bg-red-500/10 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               );
             })}
           </div>

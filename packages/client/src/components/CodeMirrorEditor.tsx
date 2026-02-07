@@ -50,6 +50,10 @@ const createTheme = (isDark: boolean): Extension => {
       color: colors.foreground,
       fontSize: '13px',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      height: '100%',
+    },
+    '.cm-scroller': {
+      height: '100%',
     },
     '.cm-content': {
       caretColor: colors.caret,

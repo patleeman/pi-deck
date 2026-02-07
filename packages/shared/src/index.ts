@@ -558,6 +558,8 @@ export type WsClientMessage =
   | WsActivatePlanMessage
   | WsDeactivatePlanMessage
   | WsUpdatePlanTaskMessage
+  | WsDeletePlanMessage
+  | WsRenamePlanMessage
   // Jobs
   | WsGetJobsMessage
   | WsGetJobContentMessage
@@ -1802,6 +1804,19 @@ export interface WsUpdatePlanTaskMessage extends WorkspaceScopedMessage {
   line: number;
   /** New done state */
   done: boolean;
+}
+
+/** Delete a plan */
+export interface WsDeletePlanMessage extends WorkspaceScopedMessage {
+  type: 'deletePlan';
+  planPath: string;
+}
+
+/** Rename a plan */
+export interface WsRenamePlanMessage extends WorkspaceScopedMessage {
+  type: 'renamePlan';
+  planPath: string;
+  newTitle: string;
 }
 
 // ============================================================================
