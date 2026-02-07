@@ -372,7 +372,7 @@ export function JobsPane({
                       onClick={() => handleSelectJob(job)}
                       className="w-full text-left px-3 py-2.5 sm:py-2 transition-colors hover:bg-pi-bg border-b border-pi-border/30"
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <span className="text-[13px] sm:text-[12px] text-pi-text truncate flex-1">
                           {job.title}
                         </span>

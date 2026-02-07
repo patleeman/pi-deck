@@ -14,6 +14,16 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
   const [selectedOptionIndex, setSelectedOptionIndex] = useState(0);
 
   const currentQuestion = request.questions[currentQuestionIndex];
+  
+  // Guard against empty or invalid questions
+  if (!currentQuestion) {
+    return (
+      <div className="w-full bg-pi-bg border border-pi-border rounded-lg shadow-sm p-3">
+        <div className="text-pi-error text-[13px]">Error: No question available</div>
+      </div>
+    );
+  }
+  
   const isLastQuestion = currentQuestionIndex === request.questions.length - 1;
   const isSingleQuestion = request.questions.length === 1;
 
@@ -31,7 +41,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
         setShowCustomInput(false);
         setCustomInput('');
       } else if (e.key === 'Enter' && customInput.trim()) {
-        handleSelectOption(customInput.trim());
+        handleSelectOption(customInput.trim(), true);
       }
       return;
     }
@@ -54,7 +64,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
       case 'Enter':
         e.preventDefault();
         if (selectedOptionIndex < options.length) {
-          handleSelectOption(options[selectedOptionIndex].value);
+          handleSelectOption(options[selectedOptionIndex].value, false, selectedOptionIndex + 1, options[selectedOptionIndex].label);
         } else if (hasOther) {
           setShowCustomInput(true);
         }
@@ -69,7 +79,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
         if (num >= 1 && num <= totalOptions) {
           const idx = num - 1;
           if (idx < options.length) {
-            handleSelectOption(options[idx].value);
+            handleSelectOption(options[idx].value, false, num, options[idx].label);
           } else if (hasOther) {
             setShowCustomInput(true);
           }
@@ -83,16 +93,25 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  const handleSelectOption = (value: string) => {
+  const handleSelectOption = (value: string, wasCustom = false, index?: number, label?: string) => {
     const newAnswers = { ...answers, [currentQuestion.id]: value };
     setAnswers(newAnswers);
 
     if (isLastQuestion) {
-      // Submit all answers
-      const answerArray = request.questions.map(q => ({
-        id: q.id,
-        value: newAnswers[q.id] || '',
-      }));
+      // Submit all answers with full Answer format
+      const answerArray = request.questions.map(q => {
+        const answerValue = newAnswers[q.id] || '';
+        // Find the option to get index and label
+        const optionIndex = q.options.findIndex(o => o.value === answerValue);
+        const option = optionIndex >= 0 ? q.options[optionIndex] : null;
+        return {
+          id: q.id,
+          value: answerValue,
+          label: label || option?.label || answerValue,
+          wasCustom: wasCustom || optionIndex < 0,
+          index: index !== undefined ? index : (optionIndex >= 0 ? optionIndex + 1 : undefined),
+        };
+      });
       onResponse(request.toolCallId, JSON.stringify({ cancelled: false, answers: answerArray }));
     } else {
       // Move to next question
@@ -103,6 +122,18 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
   return (
     <div className="w-full bg-pi-bg border border-pi-border rounded-lg shadow-sm overflow-hidden">
       <div className="p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[12px] text-pi-muted">Questionnaire</div>
+          <button
+            type="button"
+            aria-label="Close questionnaire"
+            onClick={() => onResponse(request.toolCallId, JSON.stringify({ cancelled: true, answers: [] }))}
+            className="text-pi-muted hover:text-pi-text text-[16px] leading-none px-1"
+          >
+            ×
+          </button>
+        </div>
+
         {/* Question tabs (if multiple) */}
         {!isSingleQuestion && (
           <div className="flex gap-2 mb-3 text-[13px] sm:text-[11px]">
@@ -125,7 +156,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
         )}
 
         {/* Question prompt */}
-        <div className="text-pi-text text-[14px] mb-3">{currentQuestion.prompt}</div>
+        <div className="text-pi-text text-[13px] mb-3">{currentQuestion.prompt}</div>
 
         {/* Options */}
         {showCustomInput ? (
@@ -136,7 +167,7 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
               value={customInput}
               onChange={(e) => setCustomInput(e.target.value)}
               placeholder="Type your answer..."
-              className="flex-1 bg-transparent border-none outline-none text-pi-text text-[16px] font-mono"
+              className="flex-1 bg-transparent border-none outline-none text-pi-text text-[14px] font-mono"
               autoFocus
             />
             <span className="text-[11px] text-pi-muted">Enter to submit, Esc to cancel</span>
@@ -146,18 +177,18 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
             {currentQuestion.options.map((option, i) => (
               <button
                 key={option.value}
-                onClick={() => handleSelectOption(option.value)}
+                onClick={() => handleSelectOption(option.value, false, i + 1, option.label)}
                 className={`flex items-start gap-2 px-3 py-3 sm:px-2 sm:py-1.5 text-left rounded transition-colors ${
                   i === selectedOptionIndex
                     ? 'bg-pi-surface text-pi-text'
                     : 'text-pi-muted hover:bg-pi-surface/50 hover:text-pi-text'
                 }`}
               >
-                <span className="text-pi-accent text-[14px] sm:text-[12px] w-5 sm:w-4">{i + 1}.</span>
+                <span className="text-pi-accent text-[13px] sm:text-[12px] w-5 sm:w-4">{i + 1}.</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[16px] sm:text-[14px]">{option.label}</div>
+                  <div className="text-[14px] sm:text-[13px]">{option.label}</div>
                   {option.description && (
-                    <div className="text-[14px] sm:text-[12px] text-pi-muted mt-0.5">{option.description}</div>
+                    <div className="text-[12px] sm:text-[11px] text-pi-muted mt-0.5">{option.description}</div>
                   )}
                 </div>
               </button>
@@ -172,8 +203,8 @@ export function QuestionnaireUI({ request, onResponse }: QuestionnaireUIProps) {
                     : 'text-pi-muted hover:bg-pi-surface/50 hover:text-pi-text'
                 }`}
               >
-                <span className="text-pi-accent text-[14px] sm:text-[12px] w-5 sm:w-4">{currentQuestion.options.length + 1}.</span>
-                <span className="text-[16px] sm:text-[14px] italic">Type something else...</span>
+                <span className="text-pi-accent text-[13px] sm:text-[12px] w-5 sm:w-4">{currentQuestion.options.length + 1}.</span>
+                <span className="text-[14px] sm:text-[13px] italic">Type something else...</span>
               </button>
             )}
           </div>

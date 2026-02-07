@@ -22,9 +22,15 @@ import {
 } from './job-service.js';
 import type { SessionOrchestrator } from './session-orchestrator.js';
 import type { WsClientMessage, WsServerEvent, ActivePlanState, ActiveJobState } from '@pi-web-ui/shared';
+import { SyncIntegration } from './sync/index.js';
 
 // Load configuration
 const config = loadConfig();
+
+// Initialize sync system
+const syncDbPath = join(homedir(), '.pi', 'pi-web-ui-sync.db');
+const syncIntegration = new SyncIntegration(syncDbPath);
+console.log(`[Sync] Initialized sync database at ${syncDbPath}`);
 const PORT = config.port;
 
 const app = express();
@@ -49,8 +55,14 @@ const directoryBrowser = new DirectoryBrowser(config.allowedDirectories);
 const uiStateStore = getUIStateStore();
 const workspaceManager = getWorkspaceManager(config.allowedDirectories);
 
+// Wire up sync integration
+workspaceManager.setSyncIntegration(syncIntegration);
+
 // Track which workspaces each WebSocket is attached to
 const clientWorkspaces = new Map<WebSocket, Set<string>>();
+
+// Route questionnaire responses robustly by toolCallId (survives client/workspace races)
+const pendingQuestionnaireRoutes = new Map<string, { workspaceId: string; slotId: string }>();
 
 // Track active plan file content hashes for change detection
 const activePlanHashes = new Map<string, string>();
@@ -58,13 +70,13 @@ const ACTIVE_PLAN_POLL_INTERVAL_MS = 3000;
 
 // Poll active plan files for changes (agent modifying checkboxes)
 setInterval(() => {
-  for (const [ws, workspaceIds] of clientWorkspaces.entries()) {
+  for (const [, workspaceIds] of clientWorkspaces.entries()) {
     for (const workspaceId of workspaceIds) {
       const workspace = workspaceManager.getWorkspace(workspaceId);
       if (!workspace) continue;
       const planPath = uiStateStore.getActivePlan(workspace.path);
       if (!planPath) continue;
-      
+
       try {
         if (!existsSync(planPath)) {
           // Plan file was deleted while active — auto-deactivate
@@ -75,13 +87,14 @@ setInterval(() => {
             workspaceId,
             activePlan: null,
           });
+          syncIntegration.setActivePlan(workspaceId, null);
           continue;
         }
-        
+
         const content = readFileSync(planPath, 'utf-8');
         const hash = `${content.length}:${content.slice(0, 100)}:${content.slice(-100)}`;
         const prevHash = activePlanHashes.get(`${workspaceId}:${planPath}`);
-        
+
         if (prevHash && prevHash !== hash) {
           // File changed — broadcast updated state
           const plan = parsePlan(planPath, content);
@@ -97,7 +110,8 @@ setInterval(() => {
             workspaceId,
             activePlan: activePlanState,
           });
-          
+          syncIntegration.setActivePlan(workspaceId, activePlanState);
+
           // Also broadcast plan content so sidebar task list stays in sync
           broadcastToWorkspace(workspaceId, {
             type: 'planContent',
@@ -106,11 +120,12 @@ setInterval(() => {
             content,
             plan,
           });
-          
+
           // Refresh the plans list (progress bars on list view)
           const updatedPlans = discoverPlans(workspace.path);
           broadcastToWorkspace(workspaceId, { type: 'plansList', workspaceId, plans: updatedPlans });
-          
+          syncIntegration.setPlans(workspaceId, updatedPlans);
+
           // Auto-complete: if all tasks are done, mark plan as complete
           if (activePlanState && activePlanState.taskCount > 0 && activePlanState.doneCount === activePlanState.taskCount) {
             try {
@@ -125,8 +140,10 @@ setInterval(() => {
                 workspaceId,
                 activePlan: null,
               });
+              syncIntegration.setActivePlan(workspaceId, null);
               const plans = discoverPlans(workspace.path);
               broadcastToWorkspace(workspaceId, { type: 'plansList', workspaceId, plans });
+              syncIntegration.setPlans(workspaceId, plans);
             } catch {
               // Continue — plan file may be locked
             }
@@ -143,6 +160,7 @@ setInterval(() => {
           workspaceId,
           activePlan: null,
         });
+        syncIntegration.setActivePlan(workspaceId, null);
       }
     }
   }
@@ -200,11 +218,14 @@ setInterval(() => {
         // Refresh full list and active states
         const jobs = discoverJobs(workspace.path);
         broadcastToWorkspace(workspaceId, { type: 'jobsList', workspaceId, jobs });
+        syncIntegration.setJobs(workspaceId, jobs);
+        const activeJobs = getActiveJobStates(workspace.path);
         broadcastToWorkspace(workspaceId, {
           type: 'activeJob',
           workspaceId,
-          activeJobs: getActiveJobStates(workspace.path),
+          activeJobs,
         });
+        syncIntegration.setActiveJobs(workspaceId, activeJobs);
       }
     }
   }
@@ -223,6 +244,14 @@ function broadcastToWorkspace(workspaceId: string, event: WsServerEvent): void {
 
 // Forward workspace manager events to connected clients
 workspaceManager.on('event', (event: WsServerEvent) => {
+  // Track questionnaire routing by toolCallId
+  if (event.type === 'questionnaireRequest') {
+    pendingQuestionnaireRoutes.set(event.toolCallId, {
+      workspaceId: event.workspaceId,
+      slotId: event.sessionSlotId || 'default',
+    });
+  }
+
   // Broadcast to all clients that are attached to this workspace
   if ('workspaceId' in event && event.workspaceId) {
     const workspaceId = event.workspaceId;
@@ -315,6 +344,13 @@ async function handleMessage(
   ws: WebSocket,
   message: WsClientMessage
 ) {
+  // Sync protocol messages are handled by SyncIntegration's WebSocket listener.
+  // Ignore them here to avoid noisy "Unknown message type" logs.
+  const rawType = (message as { type?: string }).type;
+  if (rawType === 'ack' || rawType === 'sync' || rawType === 'mutate') {
+    return;
+  }
+
   switch (message.type) {
     // ========================================================================
     // Workspace management
@@ -325,9 +361,35 @@ async function handleMessage(
       // Track that this client is attached to this workspace
       clientWorkspaces.get(ws)?.add(result.workspace.id);
       
+      // Register with sync system
+      const syncClientId = syncIntegration.registerClient(ws, result.workspace.id);
+      console.log(`[Sync] Client ${syncClientId} registered for workspace ${result.workspace.id}`);
+      
       // Get startup info from the orchestrator
       const orchestrator = workspaceManager.getOrchestrator(result.workspace.id);
       const startupInfo = await orchestrator.getStartupInfo();
+
+      // Ensure workspace exists in sync state.
+      syncIntegration.createWorkspace(result.workspace.id, message.path);
+
+      // Seed sessions in sync state early so snapshot/delta can drive sidebar state.
+      try {
+        const sessions = await orchestrator.listSessions();
+        syncIntegration.setSessions(result.workspace.id, sessions);
+      } catch {
+        // Ignore session list failures during attach/open; client can refresh later.
+      }
+
+      // Ensure all current slots exist in sync state and seed queued state.
+      for (const slot of orchestrator.listSlots()) {
+        syncIntegration.createSlot(result.workspace.id, slot.slotId);
+        try {
+          const queued = orchestrator.getQueuedMessages(slot.slotId);
+          syncIntegration.setQueuedMessages(result.workspace.id, slot.slotId, queued);
+        } catch {
+          // Slot may disappear during reconnect races; ignore.
+        }
+      }
       
       // Apply stored thinking level preference if one exists for this workspace
       // Only apply if this is a newly created workspace (not existing)
@@ -362,29 +424,44 @@ async function handleMessage(
         console.log(`[WS] Client attached to existing workspace: ${result.workspace.path}`);
       }
       
-      // Send active plan state if one exists for this workspace
-      const activePlanPath = uiStateStore.getActivePlan(message.path);
-      if (activePlanPath) {
-        const activePlanState = getActivePlanState(activePlanPath);
-        send(ws, {
-          type: 'activePlan',
-          workspaceId: result.workspace.id,
-          activePlan: activePlanState,
-        });
-      }
+      // Seed sync workspace UI state (right pane + tab layouts) for this workspace
+      const currentUiState = uiStateStore.loadState();
+      syncIntegration.setWorkspaceUI(
+        result.workspace.id,
+        result.workspace.path,
+        currentUiState.rightPaneByWorkspace[result.workspace.path] ?? false,
+        currentUiState.paneTabsByWorkspace[result.workspace.path] ?? [],
+        currentUiState.activePaneTabByWorkspace[result.workspace.path] ?? null,
+      );
 
-      // Send active job states (jobs in planning/executing phase)
+      // Seed sync state with current plans/jobs snapshot for this workspace
+      const plans = discoverPlans(message.path);
+      syncIntegration.setPlans(result.workspace.id, plans);
+      const jobs = discoverJobs(message.path);
+      syncIntegration.setJobs(result.workspace.id, jobs);
+
+      // Send and sync active plan state
+      const activePlanPath = uiStateStore.getActivePlan(message.path);
+      const activePlanState = activePlanPath ? getActivePlanState(activePlanPath) : null;
+      send(ws, {
+        type: 'activePlan',
+        workspaceId: result.workspace.id,
+        activePlan: activePlanState,
+      });
+      syncIntegration.setActivePlan(result.workspace.id, activePlanState);
+
+      // Send and sync active job states (jobs in planning/executing phase)
       try {
         const activeJobs = getActiveJobStates(message.path);
-        if (activeJobs.length > 0) {
-          send(ws, {
-            type: 'activeJob',
-            workspaceId: result.workspace.id,
-            activeJobs,
-          });
-        }
+        send(ws, {
+          type: 'activeJob',
+          workspaceId: result.workspace.id,
+          activeJobs,
+        });
+        syncIntegration.setActiveJobs(result.workspace.id, activeJobs);
       } catch {
-        // Ignore — jobs directory may not exist yet
+        // Jobs directory may not exist yet; still clear active jobs in sync state
+        syncIntegration.setActiveJobs(result.workspace.id, []);
       }
       break;
     }
@@ -405,6 +482,7 @@ async function handleMessage(
       
       // Actually close and dispose the workspace
       workspaceManager.closeWorkspace(message.workspaceId);
+      syncIntegration.closeWorkspace(message.workspaceId);
       break;
     }
 
@@ -455,6 +533,9 @@ async function handleMessage(
         }
       }
       
+      syncIntegration.createSlot(message.workspaceId, result.slotId);
+      syncIntegration.setQueuedMessages(message.workspaceId, result.slotId, { steering: [], followUp: [] });
+
       send(ws, {
         type: 'sessionSlotCreated',
         workspaceId: message.workspaceId,
@@ -468,6 +549,7 @@ async function handleMessage(
     case 'closeSessionSlot': {
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       orchestrator.closeSlot(message.sessionSlotId);
+      syncIntegration.deleteSlot(message.workspaceId, message.sessionSlotId);
       send(ws, {
         type: 'sessionSlotClosed',
         workspaceId: message.workspaceId,
@@ -503,6 +585,17 @@ async function handleMessage(
         type: 'uiState',
         state: updated,
       });
+
+      // Keep sync state aligned with workspace-scoped UI layout state.
+      for (const workspace of workspaceManager.listWorkspaces()) {
+        syncIntegration.setWorkspaceUI(
+          workspace.id,
+          workspace.path,
+          updated.rightPaneByWorkspace[workspace.path] ?? false,
+          updated.paneTabsByWorkspace[workspace.path] ?? [],
+          updated.activePaneTabByWorkspace[workspace.path] ?? null,
+        );
+      }
       break;
     }
 
@@ -547,38 +640,32 @@ async function handleMessage(
     }
 
     case 'steer': {
-      console.log(`[Steer] Received steer request - workspace: ${message.workspaceId}, slot: ${message.sessionSlotId}, message: "${message.message?.substring(0, 50)}..."`);
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
-      console.log(`[Steer] Calling orchestrator.steer for slot: ${slotId}`);
       await orchestrator.steer(slotId, message.message, message.images);
-      console.log(`[Steer] orchestrator.steer completed`);
-      // Send updated queue state so UI can show the queued message
+
+      // Broadcast updated queue state so all clients stay in sync.
       const steerQueue = orchestrator.getQueuedMessages(slotId);
-      console.log(`[Steer] Queue state - steering: ${steerQueue.steering.length}, followUp: ${steerQueue.followUp.length}`);
-      console.log(`[Steer] Steering messages: ${JSON.stringify(steerQueue.steering)}`);
-      send(ws, {
+      syncIntegration.setQueuedMessages(message.workspaceId, slotId, steerQueue);
+      broadcastToWorkspace(message.workspaceId, {
         type: 'queuedMessages',
         workspaceId: message.workspaceId,
         sessionSlotId: slotId,
         steering: steerQueue.steering,
         followUp: steerQueue.followUp,
       });
-      console.log(`[Steer] Sent queuedMessages event to client`);
       break;
     }
 
     case 'followUp': {
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
-      console.log(`[followUp] Received followUp message: "${message.message?.substring(0, 50)}"`);
-      console.log(`[followUp] Before followUp - queue state:`, orchestrator.getQueuedMessages(slotId));
       await orchestrator.followUp(slotId, message.message);
-      console.log(`[followUp] After followUp - queue state:`, orchestrator.getQueuedMessages(slotId));
-      // Send updated queue state so UI can show the queued message
+
+      // Broadcast updated queue state so all clients stay in sync.
       const followQueue = orchestrator.getQueuedMessages(slotId);
-      console.log(`[followUp] Sending queuedMessages event:`, followQueue);
-      send(ws, {
+      syncIntegration.setQueuedMessages(message.workspaceId, slotId, followQueue);
+      broadcastToWorkspace(message.workspaceId, {
         type: 'queuedMessages',
         workspaceId: message.workspaceId,
         sessionSlotId: slotId,
@@ -722,11 +809,13 @@ async function handleMessage(
     case 'getSessions': {
       // Sessions list is workspace-wide
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
+      const sessions = await orchestrator.listSessions();
       send(ws, {
         type: 'sessions',
         workspaceId: message.workspaceId,
-        sessions: await orchestrator.listSessions(),
+        sessions,
       });
+      syncIntegration.setSessions(message.workspaceId, sessions);
       break;
     }
 
@@ -1265,6 +1354,7 @@ async function handleMessage(
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
       const { steering, followUp } = orchestrator.getQueuedMessages(slotId);
+      syncIntegration.setQueuedMessages(message.workspaceId, slotId, { steering, followUp });
       send(ws, {
         type: 'queuedMessages',
         workspaceId: message.workspaceId,
@@ -1279,7 +1369,8 @@ async function handleMessage(
       const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
       const slotId = getSlotId(message);
       const { steering, followUp } = orchestrator.clearQueue(slotId);
-      send(ws, {
+      syncIntegration.setQueuedMessages(message.workspaceId, slotId, { steering, followUp });
+      broadcastToWorkspace(message.workspaceId, {
         type: 'queuedMessages',
         workspaceId: message.workspaceId,
         sessionSlotId: slotId,
@@ -1705,17 +1796,35 @@ async function handleMessage(
     }
 
     case 'questionnaireResponse': {
-      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      // Route by toolCallId first (source of truth), fallback to message workspace/slot.
+      const route = pendingQuestionnaireRoutes.get(message.toolCallId);
+      const workspaceId = route?.workspaceId || message.workspaceId;
+      const slotId = route?.slotId || message.sessionSlotId || 'default';
+
+      const workspace = workspaceManager.getWorkspace(workspaceId);
       if (!workspace) {
-        console.warn(`[WS] Workspace not found for questionnaireResponse: ${message.workspaceId}`);
+        console.warn(`[WS] Workspace not found for questionnaireResponse: ${workspaceId}`);
         break;
       }
-      const slotId = message.sessionSlotId || 'default';
+
+      // Ignore stale/duplicate responses that no longer have a pending resolver.
+      if (!workspace.orchestrator.hasPendingQuestionnaire(slotId, message.toolCallId)) {
+        console.warn(`[WS] Ignoring stale questionnaireResponse for ${message.toolCallId}`);
+        // Drop stale routing entry if present.
+        pendingQuestionnaireRoutes.delete(message.toolCallId);
+        break;
+      }
+
       workspace.orchestrator.handleQuestionnaireResponse(slotId, {
         toolCallId: message.toolCallId,
         answers: message.answers,
         cancelled: message.cancelled,
       });
+      pendingQuestionnaireRoutes.delete(message.toolCallId);
+
+      // Clear pending UI in sync state only when response was valid.
+      syncIntegration.clearPendingUI(workspaceId, slotId);
+      console.log(`[Sync] Cleared pending questionnaire for ${workspaceId}/${slotId}`);
       break;
     }
 
@@ -1726,10 +1835,12 @@ async function handleMessage(
       const workspace = workspaceManager.getWorkspace(message.workspaceId);
       if (!workspace) {
         send(ws, { type: 'plansList', workspaceId: message.workspaceId, plans: [] });
+        syncIntegration.setPlans(message.workspaceId, []);
         break;
       }
       const plans = discoverPlans(workspace.path);
       send(ws, { type: 'plansList', workspaceId: message.workspaceId, plans });
+      syncIntegration.setPlans(message.workspaceId, plans);
       break;
     }
 
@@ -1760,21 +1871,27 @@ async function handleMessage(
       if (!workspace) break;
       try {
         const plan = writePlan(message.planPath, message.content);
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'planSaved',
           workspaceId: message.workspaceId,
           planPath: message.planPath,
           plan,
         });
+
+        const plans = discoverPlans(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'plansList', workspaceId: message.workspaceId, plans });
+        syncIntegration.setPlans(message.workspaceId, plans);
+
         // If this is the active plan, also send updated active plan state
         const activePlanPath = uiStateStore.getActivePlan(workspace.path);
         if (activePlanPath === message.planPath) {
           const activePlanState = getActivePlanState(message.planPath);
-          send(ws, {
+          broadcastToWorkspace(message.workspaceId, {
             type: 'activePlan',
             workspaceId: message.workspaceId,
             activePlan: activePlanState,
           });
+          syncIntegration.setActivePlan(message.workspaceId, activePlanState);
         }
       } catch (err) {
         send(ws, {
@@ -1800,16 +1917,19 @@ async function handleMessage(
         
         // Send active plan state
         const activePlanState = getActivePlanState(message.planPath);
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'activePlan',
           workspaceId: message.workspaceId,
           activePlan: activePlanState,
         });
+        syncIntegration.setActivePlan(message.workspaceId, activePlanState);
         
         // Create a new session slot for the plan execution
         const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
         const planSlotId = `plan-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const slotResult = await orchestrator.createSlot(planSlotId);
+        syncIntegration.createSlot(message.workspaceId, planSlotId);
+        syncIntegration.setQueuedMessages(message.workspaceId, planSlotId, { steering: [], followUp: [] });
         
         // Apply stored thinking level preference
         const uiState = uiStateStore.loadState();
@@ -1835,7 +1955,8 @@ async function handleMessage(
         
         // Send updated plans list
         const plans = discoverPlans(workspace.path);
-        send(ws, { type: 'plansList', workspaceId: message.workspaceId, plans });
+        broadcastToWorkspace(message.workspaceId, { type: 'plansList', workspaceId: message.workspaceId, plans });
+        syncIntegration.setPlans(message.workspaceId, plans);
       } catch (err) {
         send(ws, {
           type: 'error',
@@ -1867,15 +1988,17 @@ async function handleMessage(
       // Clear active plan
       uiStateStore.setActivePlan(workspace.path, null);
       
-      send(ws, {
+      broadcastToWorkspace(message.workspaceId, {
         type: 'activePlan',
         workspaceId: message.workspaceId,
         activePlan: null,
       });
+      syncIntegration.setActivePlan(message.workspaceId, null);
       
       // Refresh plans list
       const plans = discoverPlans(workspace.path);
-      send(ws, { type: 'plansList', workspaceId: message.workspaceId, plans });
+      broadcastToWorkspace(message.workspaceId, { type: 'plansList', workspaceId: message.workspaceId, plans });
+      syncIntegration.setPlans(message.workspaceId, plans);
       break;
     }
 
@@ -1887,22 +2010,27 @@ async function handleMessage(
         const updatedContent = updateTaskInContent(content, message.line, message.done);
         const plan = writePlan(message.planPath, updatedContent);
         
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'planTaskUpdated',
           workspaceId: message.workspaceId,
           planPath: message.planPath,
           plan,
         });
+
+        const plans = discoverPlans(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'plansList', workspaceId: message.workspaceId, plans });
+        syncIntegration.setPlans(message.workspaceId, plans);
         
         // If this is the active plan, also update active plan state
         const activePlanPath = uiStateStore.getActivePlan(workspace.path);
         if (activePlanPath === message.planPath) {
           const activePlanState = getActivePlanState(message.planPath);
-          send(ws, {
+          broadcastToWorkspace(message.workspaceId, {
             type: 'activePlan',
             workspaceId: message.workspaceId,
             activePlan: activePlanState,
           });
+          syncIntegration.setActivePlan(message.workspaceId, activePlanState);
           
           // Auto-complete: if all tasks are done, mark plan as complete
           if (activePlanState && activePlanState.taskCount > 0 && activePlanState.doneCount === activePlanState.taskCount) {
@@ -1915,15 +2043,17 @@ async function handleMessage(
               
               // Deactivate the plan
               uiStateStore.clearActivePlan(workspace.path);
-              send(ws, {
+              broadcastToWorkspace(message.workspaceId, {
                 type: 'activePlan',
                 workspaceId: message.workspaceId,
                 activePlan: null,
               });
+              syncIntegration.setActivePlan(message.workspaceId, null);
               
               // Refresh plans list to show completed status
               const plansAfterComplete = discoverPlans(workspace.path);
-              send(ws, { type: 'plansList', workspaceId: message.workspaceId, plans: plansAfterComplete });
+              broadcastToWorkspace(message.workspaceId, { type: 'plansList', workspaceId: message.workspaceId, plans: plansAfterComplete });
+              syncIntegration.setPlans(message.workspaceId, plansAfterComplete);
             } catch (completeErr) {
               console.warn(`[Plans] Failed to auto-complete plan: ${completeErr}`);
             }
@@ -1946,10 +2076,12 @@ async function handleMessage(
       const workspace = workspaceManager.getWorkspace(message.workspaceId);
       if (!workspace) {
         send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs: [] });
+        syncIntegration.setJobs(message.workspaceId, []);
         break;
       }
       const jobs = discoverJobs(workspace.path);
       send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+      syncIntegration.setJobs(message.workspaceId, jobs);
       break;
     }
 
@@ -1980,7 +2112,7 @@ async function handleMessage(
       if (!workspace) break;
       try {
         const { path: jobPath, job } = createJob(workspace.path, message.title, message.description);
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'jobSaved',
           workspaceId: message.workspaceId,
           jobPath,
@@ -1988,7 +2120,16 @@ async function handleMessage(
         });
         // Refresh jobs list
         const jobs = discoverJobs(workspace.path);
-        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
+
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, {
+          type: 'activeJob',
+          workspaceId: message.workspaceId,
+          activeJobs,
+        });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
       } catch (err) {
         send(ws, {
           type: 'error',
@@ -2004,12 +2145,24 @@ async function handleMessage(
       if (!workspace) break;
       try {
         const job = writeJob(message.jobPath, message.content);
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'jobSaved',
           workspaceId: message.workspaceId,
           jobPath: message.jobPath,
           job,
         });
+
+        const jobs = discoverJobs(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
+
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, {
+          type: 'activeJob',
+          workspaceId: message.workspaceId,
+          activeJobs,
+        });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
       } catch (err) {
         send(ws, {
           type: 'error',
@@ -2026,10 +2179,10 @@ async function handleMessage(
       try {
         const { job } = promoteJob(message.jobPath, message.toPhase);
         let sessionSlotId: string | undefined;
+        const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
 
         // If promoted to planning or executing, spin up a conversation
         if (job.phase === 'planning' || job.phase === 'executing') {
-          const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
 
           if (job.phase === 'executing' && job.frontmatter.executionSessionId) {
             // Reuse existing execution session (e.g., demoted from review, now re-promoted)
@@ -2072,7 +2225,17 @@ async function handleMessage(
           }
         }
 
-        send(ws, {
+        if (sessionSlotId) {
+          syncIntegration.createSlot(message.workspaceId, sessionSlotId);
+          try {
+            const queued = orchestrator.getQueuedMessages(sessionSlotId);
+            syncIntegration.setQueuedMessages(message.workspaceId, sessionSlotId, queued);
+          } catch {
+            syncIntegration.setQueuedMessages(message.workspaceId, sessionSlotId, { steering: [], followUp: [] });
+          }
+        }
+
+        broadcastToWorkspace(message.workspaceId, {
           type: 'jobPromoted',
           workspaceId: message.workspaceId,
           jobPath: message.jobPath,
@@ -2082,7 +2245,8 @@ async function handleMessage(
 
         // Refresh jobs list
         const jobs = discoverJobs(workspace.path);
-        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
 
         // Send active job states
         const activeJobs = getActiveJobStates(workspace.path);
@@ -2091,6 +2255,7 @@ async function handleMessage(
           workspaceId: message.workspaceId,
           activeJobs,
         });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
       } catch (err) {
         send(ws, {
           type: 'error',
@@ -2107,7 +2272,7 @@ async function handleMessage(
       try {
         const { job } = demoteJob(message.jobPath, message.toPhase);
 
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'jobPromoted', // reuse same event — it's a phase change
           workspaceId: message.workspaceId,
           jobPath: message.jobPath,
@@ -2118,7 +2283,8 @@ async function handleMessage(
 
         // Refresh jobs list
         const jobs = discoverJobs(workspace.path);
-        send(ws, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
 
         // Send active job states
         const activeJobs = getActiveJobStates(workspace.path);
@@ -2127,6 +2293,7 @@ async function handleMessage(
           workspaceId: message.workspaceId,
           activeJobs,
         });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
       } catch (err) {
         send(ws, {
           type: 'error',
@@ -2145,12 +2312,16 @@ async function handleMessage(
         const updatedContent = updateJobTaskInContent(content, message.line, message.done);
         const job = writeJob(message.jobPath, updatedContent);
 
-        send(ws, {
+        broadcastToWorkspace(message.workspaceId, {
           type: 'jobTaskUpdated',
           workspaceId: message.workspaceId,
           jobPath: message.jobPath,
           job,
         });
+
+        const jobs = discoverJobs(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
 
         // Send updated active job states (progress may have changed)
         const activeJobs = getActiveJobStates(workspace.path);
@@ -2159,6 +2330,7 @@ async function handleMessage(
           workspaceId: message.workspaceId,
           activeJobs,
         });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
       } catch (err) {
         send(ws, {
           type: 'error',
@@ -2175,14 +2347,16 @@ async function handleMessage(
 }
 
 function scheduleSessionsRefresh(
-  ws: WebSocket,
+  _ws: WebSocket,
   workspaceId: string,
   orchestrator: SessionOrchestrator
 ): void {
   setImmediate(async () => {
     try {
       const sessions = await orchestrator.listSessions();
-      send(ws, { type: 'sessions', workspaceId, sessions });
+      // Broadcast to all clients in this workspace so sidebars stay in sync
+      broadcastToWorkspace(workspaceId, { type: 'sessions', workspaceId, sessions });
+      syncIntegration.setSessions(workspaceId, sessions);
     } catch (error) {
       console.error(`[WS] Failed to refresh sessions for ${workspaceId}:`, error);
     }

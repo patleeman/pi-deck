@@ -918,7 +918,7 @@ function App() {
     const sessionMap = new Map<string, { sessionId: string; sessionPath?: string; label: string; updatedAt: number }>();
     workspace.sessions.forEach((session) => {
       const label = session.name
-        || (session.firstMessage && session.firstMessage !== '(no messages)' ? session.firstMessage.slice(0, 40) : null)
+        || (session.firstMessage && session.firstMessage !== '(no messages)' ? session.firstMessage : null)
         || 'New conversation';
       sessionMap.set(session.id, {
         sessionId: session.id,
@@ -940,7 +940,7 @@ function App() {
       }
       const firstUserMessage = getSlotFirstUserMessage(slot);
       const label = slot.state?.sessionName
-        || (firstUserMessage ? firstUserMessage.slice(0, 40) : undefined)
+        || firstUserMessage
         || 'New conversation';
       const updatedAt = slot.messages.reduce((latest, message) => Math.max(latest, message.timestamp ?? 0), 0) || Date.now();
       sessionMap.set(sessionId, {

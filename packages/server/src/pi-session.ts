@@ -137,6 +137,13 @@ export class PiSession extends EventEmitter {
   }
 
   /**
+   * Check whether a questionnaire tool call is still pending in this session.
+   */
+  hasPendingQuestionnaire(toolCallId: string): boolean {
+    return this.extensionUIContext?.hasPendingQuestionnaire(toolCallId) ?? false;
+  }
+
+  /**
    * Handle custom UI input from the client.
    */
   handleCustomUIInput(input: import('@pi-web-ui/shared').CustomUIInputEvent): void {
@@ -424,6 +431,8 @@ export class PiSession extends EventEmitter {
       tokens,
       contextWindowPercent,
       git,
+      // Include pending questionnaire request for reconnects
+      questionnaireRequest: this.extensionUIContext?.getPendingQuestionnaireRequest(),
     };
   }
 

@@ -29,6 +29,8 @@ interface SessionSlot {
   unsubscribe: () => void;
   /** The session file/ID currently loaded in this slot (if any) */
   loadedSessionId: string | null;
+  /** Pending questionnaire request, if any (for reconnects) */
+  pendingQuestionnaireRequest?: { toolCallId: string; questions: QuestionnaireQuestion[] };
 }
 
 /**
@@ -45,10 +47,26 @@ export class SessionOrchestrator extends EventEmitter {
   private cwd: string;
   private slots = new Map<string, SessionSlot>();
   private nextSlotId = 1;
+  private workspaceId: string | null = null;
+  private syncIntegration: import('./sync/index.js').SyncIntegration | null = null;
 
   constructor(cwd: string) {
     super();
     this.cwd = cwd;
+  }
+
+  /**
+   * Set the workspace ID for this orchestrator
+   */
+  setWorkspaceId(id: string): void {
+    this.workspaceId = id;
+  }
+
+  /**
+   * Set the sync integration for state tracking
+   */
+  setSyncIntegration(sync: import('./sync/index.js').SyncIntegration): void {
+    this.syncIntegration = sync;
   }
 
   /**
@@ -66,6 +84,22 @@ export class SessionOrchestrator extends EventEmitter {
       const slot = this.slots.get(id)!;
       const state = await slot.session.getState();
       const messages = slot.session.getMessages();
+      // Re-send pending questionnaire request if any (for client reconnects),
+      // but only if the underlying resolver is still pending in the session.
+      if (slot.pendingQuestionnaireRequest) {
+        const pending = slot.session.hasPendingQuestionnaire(slot.pendingQuestionnaireRequest.toolCallId);
+        if (pending) {
+          setTimeout(() => {
+            this.emit('questionnaireRequest', {
+              ...slot.pendingQuestionnaireRequest!,
+              sessionSlotId: id,
+            });
+          }, 100);
+        } else {
+          // Drop stale pending questionnaire entries
+          delete slot.pendingQuestionnaireRequest;
+        }
+      }
       return { slotId: id, state, messages };
     }
 
@@ -387,9 +421,21 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
+   * Check if a questionnaire tool call is still pending for a slot.
+   */
+  hasPendingQuestionnaire(slotId: string, toolCallId: string): boolean {
+    return this.getSession(slotId).hasPendingQuestionnaire(toolCallId);
+  }
+
+  /**
    * Handle a questionnaire response from the client.
    */
   handleQuestionnaireResponse(slotId: string, response: QuestionnaireResponse): void {
+    const slot = this.slots.get(slotId);
+    if (slot) {
+      // Clear pending questionnaire request
+      delete slot.pendingQuestionnaireRequest;
+    }
     return this.getSession(slotId).handleQuestionnaireResponse(response);
   }
 
@@ -399,8 +445,13 @@ export class SessionOrchestrator extends EventEmitter {
 
   private subscribeToSession(slotId: string, session: PiSession): () => void {
     const eventHandler = (event: SessionEvent) => {
-      // Emit event with slotId attached
+      // Emit event with slotId attached (for backward compatibility)
       this.emit('event', { ...event, sessionSlotId: slotId });
+
+      // Forward to sync system for durable state tracking
+      if (this.workspaceId && this.syncIntegration) {
+        this.syncIntegration.handleSessionEvent(this.workspaceId, slotId, event);
+      }
 
       // When a user message starts, the SDK may have consumed a steering message
       // from the queue. Send updated queue state so the UI clears stale entries.
@@ -443,6 +494,11 @@ export class SessionOrchestrator extends EventEmitter {
 
     // Handler for native questionnaire requests
     const questionnaireRequestHandler = (request: { toolCallId: string; questions: QuestionnaireQuestion[] }) => {
+      // Store for reconnects
+      const slot = this.slots.get(slotId);
+      if (slot) {
+        slot.pendingQuestionnaireRequest = request;
+      }
       this.emit('questionnaireRequest', { ...request, sessionSlotId: slotId });
     };
 

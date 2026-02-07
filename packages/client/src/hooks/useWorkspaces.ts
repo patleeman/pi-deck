@@ -16,6 +16,10 @@ import type {
   CustomUIState,
   QuestionnaireRequest,
   PaneTabPageState,
+  ActivePlanState,
+  ActiveJobState,
+  PlanInfo,
+  JobInfo,
 } from '@pi-web-ui/shared';
 
 interface ToolExecution {
@@ -232,6 +236,35 @@ function createEmptySlot(slotId: string): SessionSlotState {
   };
 }
 
+type SyncMutation = {
+  type: string;
+  workspaceId: string;
+  [key: string]: unknown;
+};
+
+interface SyncSnapshotMessage {
+  type: 'snapshot';
+  version?: number;
+  state?: {
+    id: string;
+    path?: string;
+    sessions?: SessionInfo[];
+    plans?: PlanInfo[];
+    jobs?: JobInfo[];
+    activePlan?: ActivePlanState | null;
+    activeJobs?: ActiveJobState[];
+    rightPaneOpen?: boolean;
+    paneTabs?: PaneTabPageState[];
+    activePaneTab?: string | null;
+  } | null;
+}
+
+interface SyncDeltaMessage {
+  type: 'delta';
+  version?: number;
+  deltas?: SyncMutation[];
+}
+
 export function useWorkspaces(url: string): UseWorkspacesReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -277,6 +310,10 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
   const paneTabsByWorkspaceRef = useRef<Record<string, PaneTabPageState[]>>({});
   const activePaneTabByWorkspaceRef = useRef<Record<string, string>>({});
   const sessionSlotRequestsRef = useRef<Record<string, Set<string>>>({});
+  // Prevent duplicate questionnaire responses for the same toolCallId
+  const respondedQuestionnairesRef = useRef<Record<string, Set<string>>>({});
+  // Workspaces that have received sync snapshot/delta and should use sync as source of truth
+  const syncAuthoritativeWorkspacesRef = useRef<Set<string>>(new Set());
   
   useEffect(() => { workspacesRef.current = workspaces; }, [workspaces]);
   useEffect(() => { activeWorkspaceIdRef.current = activeWorkspaceId; }, [activeWorkspaceId]);
@@ -386,6 +423,213 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     schedule(() => flushStreamingUpdates());
   }, [flushStreamingUpdates]);
 
+  const sendSyncAck = useCallback((version: number | undefined) => {
+    if (version === undefined) return;
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'ack', version }));
+  }, []);
+
+  const applySyncMutation = useCallback((mutation: SyncMutation) => {
+    if (!mutation.workspaceId) return;
+    const workspaceId = mutation.workspaceId;
+    syncAuthoritativeWorkspacesRef.current.add(workspaceId);
+
+    switch (mutation.type) {
+      case 'workspaceClose': {
+        setActivePlanByWorkspace((prev) => {
+          const next = { ...prev };
+          delete next[workspaceId];
+          return next;
+        });
+        setActiveJobsByWorkspace((prev) => {
+          const next = { ...prev };
+          delete next[workspaceId];
+          return next;
+        });
+        syncAuthoritativeWorkspacesRef.current.delete(workspaceId);
+        break;
+      }
+      case 'sessionsUpdate': {
+        const sessions = (mutation.sessions as SessionInfo[]) || [];
+        updateWorkspace(workspaceId, { sessions });
+        break;
+      }
+      case 'plansUpdate': {
+        const plans = (mutation.plans as PlanInfo[]) || [];
+        window.dispatchEvent(new CustomEvent('pi:plansList', {
+          detail: { workspaceId, plans },
+        }));
+        break;
+      }
+      case 'jobsUpdate': {
+        const jobs = (mutation.jobs as JobInfo[]) || [];
+        window.dispatchEvent(new CustomEvent('pi:jobsList', {
+          detail: { workspaceId, jobs },
+        }));
+        break;
+      }
+      case 'activePlanUpdate': {
+        const activePlan = (mutation.activePlan as ActivePlanState | null) ?? null;
+        setActivePlanByWorkspace((prev) => ({
+          ...prev,
+          [workspaceId]: activePlan,
+        }));
+        window.dispatchEvent(new CustomEvent('pi:activePlan', {
+          detail: { workspaceId, activePlan },
+        }));
+        if (!activePlan) {
+          window.dispatchEvent(new CustomEvent('pi:planDeactivated', { detail: { workspaceId } }));
+        }
+        break;
+      }
+      case 'activeJobsUpdate': {
+        const activeJobs = (mutation.activeJobs as ActiveJobState[]) || [];
+        setActiveJobsByWorkspace((prev) => ({
+          ...prev,
+          [workspaceId]: activeJobs,
+        }));
+        window.dispatchEvent(new CustomEvent('pi:activeJob', {
+          detail: { workspaceId, activeJobs },
+        }));
+        break;
+      }
+      case 'workspaceUIUpdate': {
+        const workspacePath = (mutation.workspacePath as string) || workspacesRef.current.find((ws) => ws.id === workspaceId)?.path;
+        if (!workspacePath) break;
+
+        const rightPaneOpen = Boolean(mutation.rightPaneOpen);
+        const paneTabs = (mutation.paneTabs as PaneTabPageState[]) || [];
+        const activePaneTab = (mutation.activePaneTab as string | null) ?? null;
+
+        setRightPaneByWorkspace((prev) => {
+          const next = { ...prev };
+          if (rightPaneOpen) {
+            next[workspacePath] = true;
+          } else {
+            delete next[workspacePath];
+          }
+          return next;
+        });
+
+        setPaneTabsByWorkspace((prev) => ({ ...prev, [workspacePath]: paneTabs }));
+        setActivePaneTabByWorkspace((prev) => {
+          const next = { ...prev };
+          if (activePaneTab) {
+            next[workspacePath] = activePaneTab;
+          } else {
+            delete next[workspacePath];
+          }
+          return next;
+        });
+        break;
+      }
+      case 'queuedMessagesUpdate': {
+        const slotId = (mutation.slotId as string) || 'default';
+        const queued = (mutation.queuedMessages as { steering?: string[]; followUp?: string[] }) || {};
+        window.dispatchEvent(new CustomEvent('pi:queuedMessages', {
+          detail: {
+            workspaceId,
+            sessionSlotId: slotId,
+            steering: queued.steering || [],
+            followUp: queued.followUp || [],
+          },
+        }));
+        break;
+      }
+      default:
+        break;
+    }
+  }, [updateWorkspace]);
+
+  const handleSyncSnapshot = useCallback((snapshot: SyncSnapshotMessage) => {
+    if (!snapshot.state) {
+      sendSyncAck(snapshot.version);
+      return;
+    }
+
+    const state = snapshot.state;
+    const workspaceId = state.id;
+    if (!workspaceId) {
+      sendSyncAck(snapshot.version);
+      return;
+    }
+
+    syncAuthoritativeWorkspacesRef.current.add(workspaceId);
+
+    if (state.sessions) {
+      updateWorkspace(workspaceId, { sessions: state.sessions });
+    }
+
+    if (state.plans) {
+      window.dispatchEvent(new CustomEvent('pi:plansList', {
+        detail: { workspaceId, plans: state.plans },
+      }));
+    }
+
+    if (state.jobs) {
+      window.dispatchEvent(new CustomEvent('pi:jobsList', {
+        detail: { workspaceId, jobs: state.jobs },
+      }));
+    }
+
+    const workspacePath = state.path || workspacesRef.current.find((ws) => ws.id === workspaceId)?.path;
+    if (workspacePath) {
+      const rightPaneOpen = Boolean(state.rightPaneOpen);
+      const paneTabs = state.paneTabs || [];
+      const activePaneTab = state.activePaneTab ?? null;
+
+      setRightPaneByWorkspace((prev) => {
+        const next = { ...prev };
+        if (rightPaneOpen) {
+          next[workspacePath] = true;
+        } else {
+          delete next[workspacePath];
+        }
+        return next;
+      });
+      setPaneTabsByWorkspace((prev) => ({ ...prev, [workspacePath]: paneTabs }));
+      setActivePaneTabByWorkspace((prev) => {
+        const next = { ...prev };
+        if (activePaneTab) {
+          next[workspacePath] = activePaneTab;
+        } else {
+          delete next[workspacePath];
+        }
+        return next;
+      });
+    }
+
+    setActivePlanByWorkspace((prev) => ({
+      ...prev,
+      [workspaceId]: state.activePlan ?? null,
+    }));
+    window.dispatchEvent(new CustomEvent('pi:activePlan', {
+      detail: { workspaceId, activePlan: state.activePlan ?? null },
+    }));
+    if (!state.activePlan) {
+      window.dispatchEvent(new CustomEvent('pi:planDeactivated', { detail: { workspaceId } }));
+    }
+
+    setActiveJobsByWorkspace((prev) => ({
+      ...prev,
+      [workspaceId]: state.activeJobs ?? [],
+    }));
+    window.dispatchEvent(new CustomEvent('pi:activeJob', {
+      detail: { workspaceId, activeJobs: state.activeJobs ?? [] },
+    }));
+
+    sendSyncAck(snapshot.version);
+  }, [sendSyncAck, updateWorkspace]);
+
+  const handleSyncDelta = useCallback((delta: SyncDeltaMessage) => {
+    if (delta.deltas) {
+      for (const mutation of delta.deltas) {
+        applySyncMutation(mutation);
+      }
+    }
+    sendSyncAck(delta.version);
+  }, [applySyncMutation, sendSyncAck]);
+
   const handleEvent = useCallback(
     (event: WsServerEvent) => {
       // Helper to get slotId from event, defaulting to 'default'
@@ -480,6 +724,10 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
             }
             return current;
           });
+
+          // Reset workspace-scoped banner state on (re)open to avoid stale carry-over.
+          setActivePlanByWorkspace((prev) => ({ ...prev, [event.workspace.id]: null }));
+          setActiveJobsByWorkspace((prev) => ({ ...prev, [event.workspace.id]: [] }));
           
           send({ type: 'getSessions', workspaceId: event.workspace.id });
           send({ type: 'getModels', workspaceId: event.workspace.id });
@@ -492,6 +740,17 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           setActiveWorkspaceId((current) =>
             current === event.workspaceId ? null : current
           );
+          setActivePlanByWorkspace((prev) => {
+            const next = { ...prev };
+            delete next[event.workspaceId];
+            return next;
+          });
+          setActiveJobsByWorkspace((prev) => {
+            const next = { ...prev };
+            delete next[event.workspaceId];
+            return next;
+          });
+          syncAuthoritativeWorkspacesRef.current.delete(event.workspaceId);
           break;
 
         case 'directoryList':
@@ -642,7 +901,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
             streamingThinking: '',
             activeToolExecutions: [],
           });
+          // Reconcile with authoritative server state/message ordering after each run.
           send({ type: 'getState', workspaceId: event.workspaceId, sessionSlotId: slotId });
+          send({ type: 'getMessages', workspaceId: event.workspaceId, sessionSlotId: slotId });
           break;
         }
 
@@ -707,9 +968,15 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
                   ...ws.slots,
                   [slotId]: {
                     ...slot,
-                    messages: slot.messages.map((m) =>
-                      m.id === event.message.id ? event.message : m
-                    ),
+                    messages: (() => {
+                      const existingIndex = slot.messages.findIndex((m) => m.id === event.message.id);
+                      if (existingIndex === -1) {
+                        return [...slot.messages, event.message];
+                      }
+                      return slot.messages.map((m) =>
+                        m.id === event.message.id ? event.message : m
+                      );
+                    })(),
                     streamingText: '',
                     streamingThinking: '',
                     // Remove completed tool calls from active executions
@@ -731,21 +998,37 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
               if (ws.id !== event.workspaceId) return ws;
               const slot = ws.slots[slotId];
               if (!slot) return ws;
+
+              const existingIndex = slot.activeToolExecutions.findIndex(
+                (t) => t.toolCallId === event.toolCallId
+              );
+
+              let nextTools = slot.activeToolExecutions;
+              if (existingIndex === -1) {
+                nextTools = [
+                  ...slot.activeToolExecutions,
+                  {
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    args: event.args,
+                    status: 'running' as const,
+                  },
+                ];
+              } else {
+                nextTools = slot.activeToolExecutions.map((t, i) =>
+                  i === existingIndex
+                    ? { ...t, toolName: event.toolName, args: event.args, status: 'running' as const }
+                    : t
+                );
+              }
+
               return {
                 ...ws,
                 slots: {
                   ...ws.slots,
                   [slotId]: {
                     ...slot,
-                    activeToolExecutions: [
-                      ...slot.activeToolExecutions,
-                      {
-                        toolCallId: event.toolCallId,
-                        toolName: event.toolName,
-                        args: event.args,
-                        status: 'running' as const,
-                      },
-                    ],
+                    activeToolExecutions: nextTools,
                   },
                 },
               };
@@ -838,12 +1121,39 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
 
         case 'questionnaireRequest': {
           const slotId = getSlotId(event);
-          updateSlot(event.workspaceId, slotId, {
-            questionnaireRequest: {
-              toolCallId: event.toolCallId,
-              questions: event.questions,
-            },
-          });
+
+          // De-dupe duplicate questionnaire events for the same tool call
+          setWorkspaces((prev) =>
+            prev.map((ws) => {
+              if (ws.id !== event.workspaceId) return ws;
+              const slot = ws.slots[slotId] || createEmptySlot(slotId);
+              const existing = slot.questionnaireRequest;
+              if (existing && existing.toolCallId === event.toolCallId) {
+                return ws;
+              }
+
+              // New questionnaire tool call for this slot: allow one response for this id.
+              const responseKey = `${event.workspaceId}:${slotId}`;
+              if (!respondedQuestionnairesRef.current[responseKey]) {
+                respondedQuestionnairesRef.current[responseKey] = new Set<string>();
+              }
+              respondedQuestionnairesRef.current[responseKey].delete(event.toolCallId);
+
+              return {
+                ...ws,
+                slots: {
+                  ...ws.slots,
+                  [slotId]: {
+                    ...slot,
+                    questionnaireRequest: {
+                      toolCallId: event.toolCallId,
+                      questions: event.questions,
+                    },
+                  },
+                },
+              };
+            })
+          );
           break;
         }
 
@@ -890,8 +1200,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
         }
 
         case 'queuedMessages': {
-          console.log(`[useWorkspaces] Received queuedMessages - workspaceId: ${event.workspaceId}, slotId: ${event.sessionSlotId}`);
-          console.log(`[useWorkspaces] steering: ${JSON.stringify(event.steering)}, followUp: ${JSON.stringify(event.followUp)}`);
+          if (syncAuthoritativeWorkspacesRef.current.has(event.workspaceId)) {
+            break;
+          }
           const customEvent = new CustomEvent('pi:queuedMessages', {
             detail: {
               workspaceId: event.workspaceId,
@@ -901,7 +1212,6 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
             },
           });
           window.dispatchEvent(customEvent);
-          console.log(`[useWorkspaces] Dispatched pi:queuedMessages event`);
           break;
         }
 
@@ -1234,6 +1544,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
 
         // Plan events
         case 'plansList': {
+          if (syncAuthoritativeWorkspacesRef.current.has(event.workspaceId)) {
+            break;
+          }
           window.dispatchEvent(new CustomEvent('pi:plansList', { detail: event }));
           break;
         }
@@ -1246,6 +1559,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           break;
         }
         case 'activePlan': {
+          if (syncAuthoritativeWorkspacesRef.current.has(event.workspaceId)) {
+            break;
+          }
           setActivePlanByWorkspace((prev) => ({
             ...prev,
             [event.workspaceId]: event.activePlan,
@@ -1265,6 +1581,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
 
         // Job events
         case 'jobsList': {
+          if (syncAuthoritativeWorkspacesRef.current.has(event.workspaceId)) {
+            break;
+          }
           window.dispatchEvent(new CustomEvent('pi:jobsList', { detail: event }));
           break;
         }
@@ -1285,6 +1604,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           break;
         }
         case 'activeJob': {
+          if (syncAuthoritativeWorkspacesRef.current.has(event.workspaceId)) {
+            break;
+          }
           setActiveJobsByWorkspace((prev) => ({
             ...prev,
             [event.workspaceId]: event.activeJobs,
@@ -1340,6 +1662,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       setActiveWorkspaceId(null);
       hasRestoredWorkspacesRef.current = false;
       restoredSessionsRef.current = new Set();
+      syncAuthoritativeWorkspacesRef.current = new Set();
       setRestorationComplete(false);
 
       reconnectTimeoutRef.current = window.setTimeout(() => {
@@ -1354,13 +1677,24 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     ws.onmessage = (event) => {
       if (connectionIdRef.current !== thisConnectionId) return;
       try {
-        const data: WsServerEvent = JSON.parse(event.data);
-        handleEvent(data);
+        const data = JSON.parse(event.data) as { type?: string };
+
+        if (data.type === 'snapshot') {
+          handleSyncSnapshot(data as SyncSnapshotMessage);
+          return;
+        }
+
+        if (data.type === 'delta') {
+          handleSyncDelta(data as SyncDeltaMessage);
+          return;
+        }
+
+        handleEvent(data as WsServerEvent);
       } catch (e) {
         console.error('Failed to parse WebSocket message:', e);
       }
     };
-  }, [url, handleEvent]);
+  }, [url, handleEvent, handleSyncSnapshot, handleSyncDelta]);
 
   useEffect(() => {
     let mounted = true;
@@ -1381,6 +1715,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       }
       hasRestoredWorkspacesRef.current = false;
       restoredSessionsRef.current = new Set();
+      syncAuthoritativeWorkspacesRef.current = new Set();
     };
   }, [connect]);
 
@@ -1559,23 +1894,46 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       ),
 
     // Questionnaire
-    sendQuestionnaireResponse: (slotId: string, toolCallId: string, response: string) =>
-      withActiveWorkspace((workspaceId) => {
-        try {
-          const parsed = JSON.parse(response);
-          updateSlot(workspaceId, slotId, { questionnaireRequest: null });
-          send({ 
-            type: 'questionnaireResponse', 
-            workspaceId, 
-            sessionSlotId: slotId, 
-            toolCallId,
-            answers: parsed.answers || [],
-            cancelled: parsed.cancelled || false,
-          });
-        } catch {
-          console.error('Failed to parse questionnaire response');
+    sendQuestionnaireResponse: (slotId: string, toolCallId: string, response: string) => {
+      // Prefer active workspace, but fall back to searching by slotId so close/cancel
+      // still works during reconnect / workspace switching races.
+      let workspaceId = activeWorkspaceIdRef.current;
+      if (!workspaceId) {
+        const match = workspacesRef.current.find((ws) => ws.slots[slotId]);
+        workspaceId = match?.id ?? null;
+      }
+      if (!workspaceId) {
+        return;
+      }
+
+      try {
+        const responseKey = `${workspaceId}:${slotId}`;
+        if (!respondedQuestionnairesRef.current[responseKey]) {
+          respondedQuestionnairesRef.current[responseKey] = new Set<string>();
         }
-      }),
+
+        // Always close locally to avoid stuck UI states.
+        updateSlot(workspaceId, slotId, { questionnaireRequest: null });
+
+        // Guard: send each questionnaire response only once per toolCallId.
+        if (respondedQuestionnairesRef.current[responseKey].has(toolCallId)) {
+          return;
+        }
+        respondedQuestionnairesRef.current[responseKey].add(toolCallId);
+
+        const parsed = JSON.parse(response);
+        send({
+          type: 'questionnaireResponse',
+          workspaceId,
+          sessionSlotId: slotId,
+          toolCallId,
+          answers: parsed.answers || [],
+          cancelled: parsed.cancelled || false,
+        });
+      } catch {
+        console.error('Failed to parse questionnaire response');
+      }
+    },
 
     // Extension UI
     sendExtensionUIResponse: (slotId: string, response: { requestId: string; cancelled: boolean; value?: string | boolean }) =>

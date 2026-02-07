@@ -112,11 +112,14 @@ export class WebExtensionUIContext implements ExtensionUIContext {
   /** Set when a questionnaire tool starts; consumed by next custom() call */
   private _questionnaireToolCallId: string | null = null;
   private _questionnaireQuestions: QuestionnaireQuestion[] | null = null;
+  private _questionnaireSetTime: number = 0;
   /** Pending questionnaire resolvers keyed by toolCallId */
   private pendingQuestionnaireResolvers = new Map<string, {
     resolve: (value: any) => void;
     questions: QuestionnaireQuestion[];
   }>();
+  /** Queue of recent questionnaire tool calls (for race condition handling) */
+  private recentQuestionnaireCalls: Array<{ toolCallId: string; questions: QuestionnaireQuestion[]; time: number }> = [];
 
   constructor(options: WebExtensionUIContextOptions) {
     this.sendRequest = options.sendRequest;
@@ -137,6 +140,16 @@ export class WebExtensionUIContext implements ExtensionUIContext {
   setQuestionnaireMode(toolCallId: string, questions: QuestionnaireQuestion[]): void {
     this._questionnaireToolCallId = toolCallId;
     this._questionnaireQuestions = questions;
+    this._questionnaireSetTime = Date.now();
+    // Also add to queue for race condition handling
+    this.recentQuestionnaireCalls.push({ toolCallId, questions, time: Date.now() });
+    // Clean old entries (older than 5 seconds)
+    this.recentQuestionnaireCalls = this.recentQuestionnaireCalls.filter(c => Date.now() - c.time < 5000);
+  }
+
+  /** Whether a questionnaire with this toolCallId is still pending resolution. */
+  hasPendingQuestionnaire(toolCallId: string): boolean {
+    return this.pendingQuestionnaireResolvers.has(toolCallId);
   }
 
   /**
@@ -214,6 +227,32 @@ export class WebExtensionUIContext implements ExtensionUIContext {
     this.pendingQuestionnaireResolvers.clear();
     this._questionnaireToolCallId = null;
     this._questionnaireQuestions = null;
+    this._questionnaireSetTime = 0;
+    this.recentQuestionnaireCalls = [];
+  }
+
+  /**
+   * Get the pending questionnaire request, if any.
+   * Used for reconnects to restore UI state.
+   */
+  getPendingQuestionnaireRequest(): { toolCallId: string; questions: QuestionnaireQuestion[] } | undefined {
+    // Check current active questionnaire
+    if (this._questionnaireToolCallId && this._questionnaireQuestions) {
+      return {
+        toolCallId: this._questionnaireToolCallId,
+        questions: this._questionnaireQuestions,
+      };
+    }
+    // Check pending resolvers (questionnaire already sent to client, waiting for response)
+    for (const [toolCallId, pending] of this.pendingQuestionnaireResolvers) {
+      return { toolCallId, questions: pending.questions };
+    }
+    // Check recent calls queue
+    if (this.recentQuestionnaireCalls.length > 0) {
+      const recent = this.recentQuestionnaireCalls[this.recentQuestionnaireCalls.length - 1];
+      return { toolCallId: recent.toolCallId, questions: recent.questions };
+    }
+    return undefined;
   }
 
   // ============================================================================
@@ -381,13 +420,29 @@ export class WebExtensionUIContext implements ExtensionUIContext {
    * mock TUI rendering and uses the native web QuestionnaireUI component instead.
    */
   async custom<T>(factory: any, options?: any): Promise<T> {
+    // Race guard: tool execute may call custom() before tool_execution_start is observed.
+    // Wait briefly for setQuestionnaireMode() to populate questionnaire metadata.
+    if (!this._questionnaireToolCallId) {
+      for (let i = 0; i < 12; i++) {
+        if (this._questionnaireToolCallId) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+
+    // Fallback to recent queue if mode arrived slightly out of order
+    if (!this._questionnaireToolCallId && this.recentQuestionnaireCalls.length > 0) {
+      const recent = this.recentQuestionnaireCalls[this.recentQuestionnaireCalls.length - 1];
+      this._questionnaireToolCallId = recent.toolCallId;
+      this._questionnaireQuestions = recent.questions;
+      this.recentQuestionnaireCalls = this.recentQuestionnaireCalls.filter(c => c.toolCallId !== recent.toolCallId);
+    }
+
     // Intercept questionnaire tool: use native web UI instead of mock TUI
     if (this._questionnaireToolCallId && this._questionnaireQuestions && this._sendQuestionnaireRequest) {
       const toolCallId = this._questionnaireToolCallId;
       const questions = this._questionnaireQuestions;
       this._questionnaireToolCallId = null;
       this._questionnaireQuestions = null;
-
       return new Promise<T>((resolve) => {
         this.pendingQuestionnaireResolvers.set(toolCallId, { resolve, questions });
         this._sendQuestionnaireRequest!({ toolCallId, questions });

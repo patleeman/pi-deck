@@ -57,15 +57,21 @@ function getParentPath(path: string): string {
 function buildGitTree(files: GitStatusFile[]): GitTreeNode {
   const root: GitTreeNode = { name: '', path: '', isDirectory: true, children: new Map() };
   for (const file of files) {
-    const parts = file.path.split('/');
+    // Check if path ends with slash (indicates a directory in git status)
+    const isDirectory = file.path.endsWith('/');
+    // Strip trailing slashes for processing
+    const cleanPath = file.path.replace(/\/$/, '');
+    const parts = cleanPath.split('/');
     let current = root;
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       const isLast = i === parts.length - 1;
       const currentPath = parts.slice(0, i + 1).join('/');
       if (!current.children.has(part)) {
+        // For the last part, use isDirectory flag (detected from trailing slash)
+        const nodeIsDirectory = isLast ? isDirectory : true;
         current.children.set(part, {
-          name: part, path: currentPath, isDirectory: !isLast,
+          name: part, path: currentPath, isDirectory: nodeIsDirectory,
           gitStatus: isLast ? file.status : undefined, children: new Map(),
         });
       }
@@ -136,7 +142,11 @@ export function SidebarFileTree({
 
   const gitStatusByPath = useMemo(() => {
     const map: Record<string, GitFileStatus> = {};
-    for (const file of gitStatusFiles) map[file.path] = file.status;
+    for (const file of gitStatusFiles) {
+      // Strip trailing slashes for consistent path matching
+      const cleanPath = file.path.replace(/\/$/, '');
+      map[cleanPath] = file.status;
+    }
     return map;
   }, [gitStatusFiles]);
 
@@ -283,7 +293,7 @@ export function SidebarFileTree({
             isExpanded ? <ChevronDown className="w-3 h-3 flex-shrink-0 text-pi-muted/60" /> : <ChevronRight className="w-3 h-3 flex-shrink-0 text-pi-muted/60" />
           )}
           {entry.isDirectory ? (
-            <Folder className={`w-3 h-3 flex-shrink-0 ${hasChanges ? 'text-amber-400' : 'text-pi-muted/60'}`} />
+            <Folder className={`w-3 h-3 flex-shrink-0 ${gitStatus ? GIT_STATUS_COLORS[gitStatus] : hasChanges ? 'text-amber-400' : 'text-pi-muted/60'}`} />
           ) : (
             <FileText className={`w-3 h-3 flex-shrink-0 ${gitStatus ? GIT_STATUS_COLORS[gitStatus] : 'text-pi-muted/60'}`} />
           )}

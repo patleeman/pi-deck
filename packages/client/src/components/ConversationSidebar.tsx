@@ -151,13 +151,13 @@ export function ConversationSidebar({
                 <div className="px-1 py-1 text-[12px] text-pi-muted">No conversations yet</div>
               ) : (
                 conversations.map((conversation) => (
-                  <div key={conversation.sessionId} className="group flex items-center gap-1">
+                  <div key={conversation.sessionId} className="group flex items-center gap-1 min-w-0">
                     <button
                       onClick={() => {
                         setOpenMenuId(null);
                         onSelectConversation(conversation.sessionId, conversation.sessionPath, conversation.slotId);
                       }}
-                      className={`flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-[12px] transition-colors ${
+                      className={`flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-[12px] transition-colors min-w-0 ${
                         conversation.isFocused
                           ? 'bg-pi-bg text-pi-text'
                           : 'text-pi-muted hover:bg-pi-bg hover:text-pi-text'

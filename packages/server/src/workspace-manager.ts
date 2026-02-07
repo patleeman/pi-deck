@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { basename } from 'path';
 import { SessionOrchestrator } from './session-orchestrator.js';
 import { canonicalizePath, isPathAllowed } from './config.js';
+import type { SyncIntegration } from './sync/index.js';
 import type {
   WorkspaceInfo,
   SessionState,
@@ -38,9 +39,18 @@ interface Workspace {
 export class WorkspaceManager extends EventEmitter {
   private workspaces = new Map<string, Workspace>();
   private nextWorkspaceId = 1;
+  private syncIntegration: SyncIntegration | null = null;
+  private openingPaths = new Set<string>();
 
   constructor(private allowedDirectories: string[]) {
     super();
+  }
+
+  /**
+   * Set the sync integration for state tracking
+   */
+  setSyncIntegration(sync: SyncIntegration): void {
+    this.syncIntegration = sync;
   }
 
   /**
@@ -62,19 +72,41 @@ export class WorkspaceManager extends EventEmitter {
       throw new Error(`Access denied: ${normalizedPath} is not within allowed directories`);
     }
 
+    // If another request is currently opening this exact path, wait and attach.
+    while (this.openingPaths.has(normalizedPath)) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
     // Check if workspace already exists for this path
     const existing = this.findWorkspaceByPath(normalizedPath);
     if (existing) {
       existing.clientCount++;
-      
+
+      // Ensure orchestrator has workspace ID and sync integration
+      existing.orchestrator.setWorkspaceId(existing.id);
+      if (this.syncIntegration) {
+        existing.orchestrator.setSyncIntegration(this.syncIntegration);
+      }
+
       // Return buffered events and clear buffer
       const bufferedEvents = [...existing.bufferedEvents];
       existing.bufferedEvents = [];
-      
+
       // Get state from default slot
       const defaultSlot = await existing.orchestrator.getDefaultSlot();
       const state = await defaultSlot.session.getState();
       const messages = defaultSlot.session.getMessages();
+
+      // Check for pending questionnaire request in the slot (for reconnects)
+      if (defaultSlot.pendingQuestionnaireRequest) {
+        bufferedEvents.push({
+          type: 'questionnaireRequest',
+          workspaceId: existing.id,
+          sessionSlotId: 'default',
+          toolCallId: defaultSlot.pendingQuestionnaireRequest.toolCallId,
+          questions: defaultSlot.pendingQuestionnaireRequest.questions,
+        });
+      }
 
       return {
         workspace: this.toWorkspaceInfo(existing.id, existing),
@@ -85,36 +117,46 @@ export class WorkspaceManager extends EventEmitter {
       };
     }
 
-    // Create new workspace
-    const id = `workspace-${this.nextWorkspaceId++}`;
-    const orchestrator = new SessionOrchestrator(normalizedPath);
+    // Create new workspace (guarded by openingPaths to prevent duplicates)
+    this.openingPaths.add(normalizedPath);
+    try {
+      const id = `workspace-${this.nextWorkspaceId++}`;
+      const orchestrator = new SessionOrchestrator(normalizedPath);
+      orchestrator.setWorkspaceId(id);
+      if (this.syncIntegration) {
+        orchestrator.setSyncIntegration(this.syncIntegration);
+      }
 
-    // Subscribe to orchestrator events
-    const unsubscribe = this.subscribeToOrchestrator(id, orchestrator);
+      // Subscribe to orchestrator events
+      const unsubscribe = this.subscribeToOrchestrator(id, orchestrator);
 
-    const workspace: Workspace = {
-      id,
-      path: normalizedPath,
-      name: basename(normalizedPath) || normalizedPath,
-      orchestrator,
-      unsubscribe,
-      clientCount: 1,
-      bufferedEvents: [],
-      maxBufferedEvents: 1000,
-    };
+      const workspace: Workspace = {
+        id,
+        path: normalizedPath,
+        name: basename(normalizedPath) || normalizedPath,
+        orchestrator,
+        unsubscribe,
+        clientCount: 1,
+        bufferedEvents: [],
+        maxBufferedEvents: 1000,
+      };
 
-    this.workspaces.set(id, workspace);
+      // Register early so concurrent callers attach to this workspace
+      this.workspaces.set(id, workspace);
 
-    // Initialize the default slot
-    const { state, messages } = await orchestrator.createSlot('default');
+      // Initialize the default slot
+      const { state, messages } = await orchestrator.createSlot('default');
 
-    return {
-      workspace: this.toWorkspaceInfo(id, workspace),
-      state,
-      messages,
-      bufferedEvents: [],
-      isExisting: false,
-    };
+      return {
+        workspace: this.toWorkspaceInfo(id, workspace),
+        state,
+        messages,
+        bufferedEvents: [],
+        isExisting: false,
+      };
+    } finally {
+      this.openingPaths.delete(normalizedPath);
+    }
   }
 
   /**
@@ -131,7 +173,7 @@ export class WorkspaceManager extends EventEmitter {
     
     // Note: We do NOT dispose the workspace here.
     // It continues running even with no clients.
-    console.log(`[WorkspaceManager] Client detached from ${workspaceId}, ${workspace.clientCount} clients remaining`);
+    console.log(`[WorkspaceManager] Client detached from ${workspaceId}, ${workspace.clientCount} clients remaining, buffered events: ${workspace.bufferedEvents.length}`);
   }
 
   /**
@@ -305,8 +347,23 @@ export class WorkspaceManager extends EventEmitter {
         toolCallId: data.toolCallId,
         questions: data.questions,
       };
-      // Questionnaire requests need immediate user interaction
-      this.emit('event', event);
+      const workspace = this.workspaces.get(workspaceId);
+      if (workspace) {
+        // Always emit the event for immediate delivery
+        this.emit('event', event);
+
+        // Also buffer for reconnects if no clients
+        if (workspace.clientCount === 0) {
+          if (workspace.bufferedEvents.length < workspace.maxBufferedEvents) {
+            workspace.bufferedEvents.push(event);
+          }
+        }
+
+        // Track in sync state for durable reconnects
+        if (this.syncIntegration) {
+          this.syncIntegration.setPendingQuestionnaire(workspaceId, data.sessionSlotId, data.toolCallId, data.questions);
+        }
+      }
     };
 
     orchestrator.on('event', handler);
