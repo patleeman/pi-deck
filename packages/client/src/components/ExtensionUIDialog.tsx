@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { ExtensionUIRequest, ExtensionUIResponse, ExtensionUISelectOption, ExtensionUISelectRequest, ExtensionUIConfirmRequest, ExtensionUIInputRequest, ExtensionUIEditorRequest } from '@pi-web-ui/shared';
+import { CodeMirrorEditor } from './CodeMirrorEditor';
 
 interface ExtensionUIDialogProps {
   request: ExtensionUIRequest;
@@ -14,23 +13,6 @@ type RequestWithId = ExtensionUISelectRequest | ExtensionUIConfirmRequest | Exte
 function hasRequestId(request: ExtensionUIRequest): request is RequestWithId {
   return request.method !== 'notify';
 }
-
-const editorTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: 'transparent',
-    margin: 0,
-    padding: 0,
-    fontSize: '13px',
-    lineHeight: '1.5',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontSize: '13px',
-  },
-};
 
 /**
  * Dialog for handling extension UI requests (select, confirm, input, editor).
@@ -450,33 +432,6 @@ interface EditorDialogProps {
 
 function EditorDialog({ title, prefill, onSubmit, onCancel }: EditorDialogProps) {
   const [value, setValue] = useState(prefill || '');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
-
-  // Focus and select on mount
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.focus();
-      textareaRef.current.setSelectionRange(0, textareaRef.current.value.length);
-    }
-  }, []);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Cmd/Ctrl+Enter to submit
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      onSubmit(value);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onCancel();
-    }
-  };
-
-  const handleScroll = () => {
-    if (!highlightRef.current || !textareaRef.current) return;
-    highlightRef.current.scrollTop = textareaRef.current.scrollTop;
-    highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
-  };
 
   return (
     <div className="w-full bg-pi-bg border border-pi-border rounded-lg shadow-sm overflow-hidden">
@@ -485,38 +440,13 @@ function EditorDialog({ title, prefill, onSubmit, onCancel }: EditorDialogProps)
         <h2 className="text-pi-text font-medium">{title}</h2>
       </div>
 
-      {/* Textarea */}
+      {/* Editor */}
       <div className="p-4">
-        <div className="relative h-64 bg-pi-surface border border-pi-border rounded overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none">
-            <div ref={highlightRef} className="h-full overflow-auto px-3 py-2">
-              <SyntaxHighlighter
-                language="tsx"
-                style={editorTheme as any}
-                customStyle={{
-                  margin: 0,
-                  background: 'transparent',
-                  padding: 0,
-                  fontSize: '13px',
-                  lineHeight: '1.5',
-                }}
-                showLineNumbers
-                lineNumberStyle={{ color: '#7d8590', paddingRight: '12px' }}
-              >
-                {value || ' '}
-              </SyntaxHighlighter>
-            </div>
-          </div>
-          <textarea
-            ref={textareaRef}
+        <div className="h-64 rounded overflow-hidden">
+          <CodeMirrorEditor
             value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onScroll={handleScroll}
-            spellCheck={false}
-            wrap="off"
-            className="relative w-full h-full bg-transparent text-transparent font-mono text-[13px] leading-relaxed resize-none outline-none px-3 py-2"
-            style={{ caretColor: 'var(--pi-text)' }}
+            onChange={setValue}
+            language="markdown"
           />
         </div>
       </div>
@@ -539,7 +469,7 @@ function EditorDialog({ title, prefill, onSubmit, onCancel }: EditorDialogProps)
 
       {/* Footer */}
       <div className="px-4 py-2 border-t border-pi-border text-xs text-pi-muted">
-        ⌘/Ctrl+Enter to submit • Esc to cancel
+        Esc to cancel
       </div>
     </div>
   );

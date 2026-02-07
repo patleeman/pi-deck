@@ -72,3 +72,27 @@ Object.defineProperty(navigator, 'clipboard', {
 
 // Mock scrollIntoView
 Element.prototype.scrollIntoView = vi.fn();
+
+// Mock CodeMirrorEditor
+vi.mock('../src/components/CodeMirrorEditor', () => {
+  const React = require('react');
+  return {
+    CodeMirrorEditor: function CodeMirrorEditorMock({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+      return React.createElement('textarea', {
+        value: value,
+        onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value),
+        'data-testid': 'codemirror-editor',
+        'aria-label': 'editor',
+      });
+    },
+    __esModule: true,
+    default: function CodeMirrorEditorMock({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+      return React.createElement('textarea', {
+        value: value,
+        onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value),
+        'data-testid': 'codemirror-editor',
+        'aria-label': 'editor',
+      });
+    },
+  };
+});

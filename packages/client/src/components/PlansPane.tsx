@@ -9,6 +9,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import type { PlanInfo, PlanTask, ActivePlanState } from '@pi-web-ui/shared';
+import { CodeMirrorEditor } from './CodeMirrorEditor';
 
 interface PlansPaneProps {
   workspaceId: string;
@@ -366,12 +367,9 @@ export function PlansPane({
           </div>
         ) : (
           // Editor view
-          <textarea
-            value={editorContent}
-            onChange={(e) => handleEditorChange(e.target.value)}
-            className="w-full h-full bg-transparent text-pi-text text-[13px] sm:text-[12px] font-mono p-3 resize-none focus:outline-none leading-relaxed"
-            spellCheck={false}
-          />
+          <div className="h-full p-3">
+            <CodeMirrorEditor value={editorContent} onChange={handleEditorChange} />
+          </div>
         )}
       </div>
     </div>

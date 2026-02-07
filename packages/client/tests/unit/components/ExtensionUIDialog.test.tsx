@@ -371,11 +371,10 @@ describe('ExtensionUIDialog', () => {
       });
     });
 
-    it('submits with Ctrl+Enter', () => {
+    it('submits on button click', () => {
       render(<ExtensionUIDialog request={editorRequest} onResponse={defaultOnResponse} />);
       
-      const textarea = screen.getByRole('textbox');
-      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+      fireEvent.click(screen.getByText('Submit'));
       
       expect(defaultOnResponse).toHaveBeenCalledWith({
         requestId: 'req-1',
@@ -384,22 +383,10 @@ describe('ExtensionUIDialog', () => {
       });
     });
 
-    it('cancels with Escape', () => {
+    it('shows cancel hint', () => {
       render(<ExtensionUIDialog request={editorRequest} onResponse={defaultOnResponse} />);
       
-      const textarea = screen.getByRole('textbox');
-      fireEvent.keyDown(textarea, { key: 'Escape' });
-      
-      expect(defaultOnResponse).toHaveBeenCalledWith({
-        requestId: 'req-1',
-        cancelled: true,
-      });
-    });
-
-    it('shows keyboard hints', () => {
-      render(<ExtensionUIDialog request={editorRequest} onResponse={defaultOnResponse} />);
-      
-      expect(screen.getByText(/⌘\/Ctrl\+Enter/)).toBeInTheDocument();
+      expect(screen.getByText(/Esc to cancel/)).toBeInTheDocument();
     });
   });
 

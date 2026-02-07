@@ -13,77 +13,10 @@ import {
   AlertTriangle,
   X,
 } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { JobInfo, JobPhase, JobTask, ActiveJobState } from '@pi-web-ui/shared';
 import { JOB_PHASE_ORDER } from '@pi-web-ui/shared';
 import { JobMarkdownContent } from './JobMarkdownContent';
-
-const editorTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: 'transparent',
-    margin: 0,
-    padding: 0,
-    fontSize: '13px',
-    lineHeight: '1.5',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-  },
-};
-
-interface CodeEditorProps {
-  value: string;
-  onChange: (value: string) => void;
-  language?: string;
-}
-
-function CodeEditor({ value, onChange, language = 'markdown' }: CodeEditorProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
-
-  const handleScroll = () => {
-    if (!highlightRef.current || !textareaRef.current) return;
-    highlightRef.current.scrollTop = textareaRef.current.scrollTop;
-    highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
-  };
-
-  return (
-    <div className="relative flex-1 min-h-[150px] bg-pi-surface border border-pi-border rounded overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none">
-        <div ref={highlightRef} className="h-full overflow-auto px-3 py-2">
-          <SyntaxHighlighter
-            language={language}
-            style={editorTheme as any}
-            customStyle={{
-              margin: 0,
-              background: 'transparent',
-              padding: 0,
-              fontSize: '13px',
-              lineHeight: '1.5',
-            }}
-            showLineNumbers
-            lineNumberStyle={{ color: '#7d8590', paddingRight: '12px', minWidth: '36px' }}
-          >
-            {value || ' '}
-          </SyntaxHighlighter>
-        </div>
-      </div>
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={handleScroll}
-        spellCheck={false}
-        className="absolute inset-0 w-full h-full bg-transparent text-transparent font-mono text-[13px] leading-relaxed resize-none outline-none px-3 py-2 pl-[52px] whitespace-pre"
-        style={{ caretColor: 'var(--pi-text)' }}
-      />
-    </div>
-  );
-}
+import { CodeMirrorEditor } from './CodeMirrorEditor';
 
 interface JobsPaneProps {
   workspaceId: string;
@@ -493,7 +426,7 @@ export function JobsPane({
           </div>
           <div className="flex-1 flex flex-col min-h-[200px]">
             <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Description</label>
-            <CodeEditor value={newDescription} onChange={setNewDescription} />
+            <CodeMirrorEditor value={newDescription} onChange={setNewDescription} />
           </div>
         </div>
       </div>
@@ -771,7 +704,7 @@ export function JobsPane({
         ) : (
           // Raw editor with line numbers
           <div className="h-full p-3">
-            <CodeEditor value={editorContent} onChange={handleEditorChange} />
+            <CodeMirrorEditor value={editorContent} onChange={handleEditorChange} />
           </div>
         )}
       </div>
