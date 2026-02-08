@@ -496,15 +496,15 @@ function App() {
   }, []);
 
   const requestWorkspaceEntries = useCallback((workspaceId: string, path: string) => {
-    if (!ws.isConnected) return;
+    if (!wsRef.current.isConnected) return;
     const normalizedPath = path.replace(/^\/+/, '');
     const requested = workspaceEntriesRequestedRef.current[workspaceId] || new Set<string>();
     if (requested.has(normalizedPath)) return;
     requested.add(normalizedPath);
     workspaceEntriesRequestedRef.current[workspaceId] = requested;
     const requestId = `workspace-entries:${workspaceId}:${normalizedPath}:${Date.now()}`;
-    ws.listWorkspaceEntries(workspaceId, normalizedPath, requestId);
-  }, [ws]);
+    wsRef.current.listWorkspaceEntries(workspaceId, normalizedPath, requestId);
+  }, []);
 
   // File watching for expanded directories
   // Use wsRef to keep callbacks stable (avoids SidebarFileTree useEffect re-triggering)
@@ -532,9 +532,9 @@ function App() {
   }, [ws]);
 
   const requestGitStatus = useCallback((workspaceId: string) => {
-    if (!ws.isConnected) return;
-    ws.getGitStatus(workspaceId);
-  }, [ws]);
+    if (!wsRef.current.isConnected) return;
+    wsRef.current.getGitStatus(workspaceId);
+  }, []);
 
   const requestFileDiff = useCallback((workspaceId: string, path: string) => {
     if (!ws.isConnected) return;
@@ -1323,6 +1323,18 @@ function App() {
     }
   }, [activeWorkspaceId, unwatchDirectory]);
 
+  const activeWorkspaceRequestEntries = useCallback((path: string) => {
+    if (activeWorkspaceId) {
+      requestWorkspaceEntries(activeWorkspaceId, path);
+    }
+  }, [activeWorkspaceId, requestWorkspaceEntries]);
+
+  const activeWorkspaceRequestGitStatus = useCallback(() => {
+    if (activeWorkspaceId) {
+      requestGitStatus(activeWorkspaceId);
+    }
+  }, [activeWorkspaceId, requestGitStatus]);
+
   // Loading state
   if (!ws.isConnected && ws.isConnecting) {
     return (
@@ -1434,8 +1446,8 @@ function App() {
               onDeleteConversation={handleDeleteActiveConversation}
               entriesByPath={activeWs ? (workspaceEntries[activeWs.id] || {}) : undefined}
               gitStatusFiles={activeWs ? (workspaceGitStatus[activeWs.id] || []) : undefined}
-              onRequestEntries={activeWs ? ((path) => requestWorkspaceEntries(activeWs.id, path)) : undefined}
-              onRequestGitStatus={activeWs ? (() => requestGitStatus(activeWs.id)) : undefined}
+              onRequestEntries={activeWs ? activeWorkspaceRequestEntries : undefined}
+              onRequestGitStatus={activeWs ? activeWorkspaceRequestGitStatus : undefined}
               onSelectFile={handleSelectFile}
               onSelectGitFile={handleSelectGitFile}
               selectedFilePath={activeWs ? (selectedFilePathByWorkspace[activeWs.id] || '') : ''}
