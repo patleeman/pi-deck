@@ -241,6 +241,16 @@ function App() {
     }
   }, [isMobile, mobilePaneIndex, panes]);
 
+  // Auto-collapse right pane when entering mobile width
+  useEffect(() => {
+    if (isMobile && activeWs?.path) {
+      const isOpen = ws.rightPaneByWorkspace[activeWs.path] ?? false;
+      if (isOpen) {
+        ws.setWorkspaceRightPaneOpen(activeWs.path, false);
+      }
+    }
+  }, [isMobile]); // eslint-disable-line react-hooks/exhaustive-deps -- only trigger on mobile transition
+
   const focusPaneById = useCallback((paneId: string) => {
     panes.focusPane(paneId);
     if (isMobile) {
@@ -1020,10 +1030,7 @@ function App() {
     }
   }, [activeTabId, focusPaneById, isMobile, panes.focusedPaneId, panes.updatePaneSlot, resolveSessionPath, slotToTabByWorkspace, ws, ws.activeWorkspaceId, ws.activePaneTabByWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace, ws.setActiveWorkspace, ws.switchSession, ws.workspaces]);
 
-  const handleRenameConversation = useCallback((workspaceId: string, sessionId: string, sessionPath: string | undefined, label: string) => {
-    const trimmedLabel = label?.trim() || 'Conversation';
-    const newName = window.prompt('Rename conversation:', trimmedLabel);
-    if (!newName) return;
+  const handleRenameConversation = useCallback((workspaceId: string, sessionId: string, sessionPath: string | undefined, newName: string) => {
     const trimmedName = newName.trim();
     if (!trimmedName) return;
     ws.renameSession(workspaceId, sessionId, sessionPath, trimmedName);
@@ -1036,9 +1043,9 @@ function App() {
     ws.deleteSession(workspaceId, sessionId, sessionPath);
   }, [ws]);
 
-  const handleRenameActiveConversation = useCallback((sessionId: string, sessionPath: string | undefined, label: string) => {
+  const handleRenameActiveConversation = useCallback((sessionId: string, sessionPath: string | undefined, newName: string) => {
     if (!ws.activeWorkspaceId) return;
-    handleRenameConversation(ws.activeWorkspaceId, sessionId, sessionPath, label);
+    handleRenameConversation(ws.activeWorkspaceId, sessionId, sessionPath, newName);
   }, [handleRenameConversation, ws.activeWorkspaceId]);
 
   const handleDeleteActiveConversation = useCallback((sessionId: string, sessionPath: string | undefined, label: string) => {
@@ -1534,10 +1541,8 @@ function App() {
             />
             <div
               onMouseDown={handleSidebarResizeStart}
-              className="flex-shrink-0 w-1 cursor-col-resize hover:bg-pi-border"
-            >
-              <div className="bg-pi-border/50 rounded-full w-0.5 h-6" />
-            </div>
+              className="flex-shrink-0 w-px bg-pi-border cursor-col-resize hover:bg-pi-accent/40"
+            />
           </>
         )}
 
@@ -1701,10 +1706,8 @@ function App() {
           <>
             <div
               onMouseDown={handleRightPaneResizeStart}
-              className="flex-shrink-0 w-1 cursor-col-resize hover:bg-pi-border"
-            >
-              <div className="bg-pi-border/50 rounded-full w-0.5 h-6" />
-            </div>
+              className="flex-shrink-0 w-px bg-pi-border cursor-col-resize hover:bg-pi-accent/40"
+            />
             <WorkspaceFilesPane
               className="flex-shrink-0"
               style={rightPaneStyle}

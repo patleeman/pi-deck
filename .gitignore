@@ -34,3 +34,4 @@ vite.config.ts.timestamp-*
 # Test results
 playwright-report/
 test-results/
+pi-deck-*.tgz

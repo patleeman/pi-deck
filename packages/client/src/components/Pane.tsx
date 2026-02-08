@@ -1229,7 +1229,7 @@ export function Pane({
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      className="flex-1 flex flex-col bg-pi-surface rounded overflow-hidden min-w-0 min-h-0 border border-pi-border relative"
+      className="flex-1 flex flex-col bg-pi-surface overflow-hidden min-w-0 min-h-0 relative"
     >
       {/* Drag overlay */}
       {isDragging && (

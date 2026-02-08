@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type MouseEvent } from 'react';
+import { useState, useRef, useCallback, useEffect, type CSSProperties, type MouseEvent, type KeyboardEvent } from 'react';
 import { X, ChevronLeft, ChevronRight, FolderOpen, Settings, MoreHorizontal } from 'lucide-react';
 
 interface PaneSummary {
@@ -36,7 +36,7 @@ interface WorkspaceSidebarProps {
   onSelectWorkspace: (id: string) => void;
   onCloseWorkspace: (id: string) => void;
   onSelectConversation: (workspaceId: string, sessionId: string, sessionPath?: string, slotId?: string) => void;
-  onRenameConversation: (workspaceId: string, sessionId: string, sessionPath: string | undefined, label: string) => void;
+  onRenameConversation: (workspaceId: string, sessionId: string, sessionPath: string | undefined, newName: string) => void;
   onDeleteConversation: (workspaceId: string, sessionId: string, sessionPath: string | undefined, label: string) => void;
   onOpenBrowser: () => void;
   onOpenSettings: () => void;
@@ -64,16 +64,53 @@ export function WorkspaceSidebar({
   onClose,
 }: WorkspaceSidebarProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingId]);
+
+  const startEditing = useCallback((conversation: ConversationSummary) => {
+    setEditingId(conversation.sessionId);
+    setEditingValue(conversation.label);
+    setOpenMenuId(null);
+  }, []);
+
+  const commitEdit = useCallback((workspaceId: string, conversation: ConversationSummary) => {
+    const trimmed = editingValue.trim();
+    setEditingId(null);
+    if (trimmed && trimmed !== conversation.label) {
+      onRenameConversation(workspaceId, conversation.sessionId, conversation.sessionPath, trimmed);
+    }
+  }, [editingValue, onRenameConversation]);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+  }, []);
+
+  const handleEditKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, workspaceId: string, conversation: ConversationSummary) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitEdit(workspaceId, conversation);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEdit();
+    }
+  }, [commitEdit, cancelEdit]);
 
   const handleMenuToggle = (event: MouseEvent<HTMLButtonElement>, menuId: string) => {
     event.stopPropagation();
     setOpenMenuId((prev) => (prev === menuId ? null : menuId));
   };
 
-  const handleRename = (event: MouseEvent<HTMLButtonElement>, workspaceId: string, conversation: ConversationSummary) => {
+  const handleRename = (event: MouseEvent<HTMLButtonElement>, conversation: ConversationSummary) => {
     event.stopPropagation();
-    setOpenMenuId(null);
-    onRenameConversation(workspaceId, conversation.sessionId, conversation.sessionPath, conversation.label);
+    startEditing(conversation);
   };
 
   const handleDelete = (event: MouseEvent<HTMLButtonElement>, workspaceId: string, conversation: ConversationSummary) => {
@@ -171,25 +208,42 @@ export function WorkspaceSidebar({
                   <div className="mt-1 space-y-0.5 overflow-hidden">
                     {workspace.conversations.map((conversation) => {
                       const menuId = `${workspace.id}:${conversation.sessionId}`;
+                      const isEditing = editingId === conversation.sessionId;
                       return (
                         <div key={conversation.sessionId} className="group flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              setOpenMenuId(null);
-                              onSelectConversation(workspace.id, conversation.sessionId, conversation.sessionPath, conversation.slotId);
-                            }}
-                            className={`flex flex-1 items-center gap-2 px-2 py-2 sm:py-1 text-[14px] sm:text-[12px] text-left transition-colors ${
-                              conversation.isFocused && workspace.isActive
-                                ? 'border-l-2 border-pi-accent text-pi-text'
-                                : 'border-l-2 border-transparent text-pi-muted hover:text-pi-text'
-                            }`}
-                            title={conversation.label}
-                          >
-                            {conversation.isStreaming && (
-                              <span className="w-2 h-2 rounded-full bg-pi-success status-running flex-shrink-0" />
-                            )}
-                            <span className="truncate">{conversation.label}</span>
-                          </button>
+                          {isEditing ? (
+                            <input
+                              ref={editInputRef}
+                              value={editingValue}
+                              onChange={(e) => setEditingValue(e.target.value)}
+                              onKeyDown={(e) => handleEditKeyDown(e, workspace.id, conversation)}
+                              onBlur={() => commitEdit(workspace.id, conversation)}
+                              className="flex-1 rounded px-2 py-0.5 text-[12px] bg-pi-bg text-pi-text border border-pi-accent outline-none min-w-0 mx-1"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                onSelectConversation(workspace.id, conversation.sessionId, conversation.sessionPath, conversation.slotId);
+                              }}
+                              onDoubleClick={(e) => {
+                                e.preventDefault();
+                                startEditing(conversation);
+                              }}
+                              className={`flex flex-1 items-center gap-2 px-2 py-2 sm:py-1 text-[14px] sm:text-[12px] text-left transition-colors ${
+                                conversation.isFocused && workspace.isActive
+                                  ? 'border-l-2 border-pi-accent text-pi-text'
+                                  : 'border-l-2 border-transparent text-pi-muted hover:text-pi-text'
+                              }`}
+                              title={conversation.label}
+                            >
+                              {conversation.isStreaming && (
+                                <span className="w-2 h-2 rounded-full bg-pi-success status-running flex-shrink-0" />
+                              )}
+                              <span className="truncate">{conversation.label}</span>
+                            </button>
+                          )}
                           <div className="relative flex-shrink-0">
                             <button
                               onClick={(event) => handleMenuToggle(event, menuId)}
@@ -206,7 +260,7 @@ export function WorkspaceSidebar({
                               >
                                 <button
                                   className="flex w-full items-center px-3 py-1.5 text-left text-[12px] text-pi-text hover:bg-pi-bg"
-                                  onClick={(event) => handleRename(event, workspace.id, conversation)}
+                                  onClick={(event) => handleRename(event, conversation)}
                                 >
                                   Rename
                                 </button>

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo, type CSSProperties, type MouseEvent, type KeyboardEvent } from 'react';
 import { MoreHorizontal, MessageSquare, FolderTree, PanelLeftClose, Briefcase } from 'lucide-react';
 import type { FileInfo, GitStatusFile, ActiveJobState, JobPhase } from '@pi-deck/shared';
 import { SidebarFileTree } from './SidebarFileTree';
@@ -18,7 +18,7 @@ interface ConversationSidebarProps {
   workspacePath?: string;
   conversations: ConversationSummary[];
   onSelectConversation: (sessionId: string, sessionPath?: string, slotId?: string) => void;
-  onRenameConversation: (sessionId: string, sessionPath: string | undefined, label: string) => void;
+  onRenameConversation: (sessionId: string, sessionPath: string | undefined, newName: string) => void;
   onDeleteConversation: (sessionId: string, sessionPath: string | undefined, label: string) => void;
   entriesByPath?: Record<string, FileInfo[]>;
   gitStatusFiles?: GitStatusFile[];
@@ -70,6 +70,9 @@ export function ConversationSidebar({
   style,
 }: ConversationSidebarProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<SidebarTab>('conversations');
   const [ratios, setRatios] = useState(DEFAULT_EXPLORER_RATIOS);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -128,6 +131,42 @@ export function ConversationSidebar({
     complete: 'text-pi-muted',
   };
 
+  // Focus the inline rename input when it appears
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingId]);
+
+  const startEditing = useCallback((conversation: ConversationSummary) => {
+    setEditingId(conversation.sessionId);
+    setEditingValue(conversation.label);
+    setOpenMenuId(null);
+  }, []);
+
+  const commitEdit = useCallback((conversation: ConversationSummary) => {
+    const trimmed = editingValue.trim();
+    setEditingId(null);
+    if (trimmed && trimmed !== conversation.label) {
+      onRenameConversation(conversation.sessionId, conversation.sessionPath, trimmed);
+    }
+  }, [editingValue, onRenameConversation]);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+  }, []);
+
+  const _handleEditKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, conversation: ConversationSummary) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitEdit(conversation);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEdit();
+    }
+  }, [commitEdit, cancelEdit]);
+
   const handleMenuToggle = (event: MouseEvent<HTMLButtonElement>, sessionId: string) => {
     event.stopPropagation();
     setOpenMenuId((prev) => (prev === sessionId ? null : sessionId));
@@ -135,8 +174,7 @@ export function ConversationSidebar({
 
   const handleRename = (event: MouseEvent<HTMLButtonElement>, conversation: ConversationSummary) => {
     event.stopPropagation();
-    setOpenMenuId(null);
-    onRenameConversation(conversation.sessionId, conversation.sessionPath, conversation.label);
+    startEditing(conversation);
   };
 
   const handleDelete = (event: MouseEvent<HTMLButtonElement>, conversation: ConversationSummary) => {
@@ -201,59 +239,78 @@ export function ConversationSidebar({
             {conversations.length === 0 ? (
               <div className="px-1 py-1 text-[12px] text-pi-muted">No conversations yet</div>
             ) : (
-              conversations.map((conversation) => (
-                <div key={conversation.sessionId} className="group flex items-center gap-1 min-w-0">
-                  <button
-                    onClick={() => {
-                      setOpenMenuId(null);
-                      onSelectConversation(conversation.sessionId, conversation.sessionPath, conversation.slotId);
-                    }}
-                    className={`flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-[12px] transition-colors min-w-0 ${
-                      conversation.isFocused
-                        ? 'bg-pi-bg text-pi-text'
-                        : 'text-pi-muted hover:bg-pi-bg hover:text-pi-text'
-                    }`}
-                    title={conversation.label}
-                  >
-                    {conversation.isStreaming && (
-                      <span className="w-2 h-2 rounded-full bg-pi-success status-running flex-shrink-0" />
-                    )}
-                    {conversation.slotId && jobBySlotId.has(conversation.slotId) && (
-                      <Briefcase className={`w-3 h-3 flex-shrink-0 ${JOB_PHASE_COLORS[jobBySlotId.get(conversation.slotId)!.phase]}`} />
-                    )}
-                    <span className="truncate">{conversation.label}</span>
-                  </button>
-                  <div className="relative flex-shrink-0">
-                    <button
-                      onClick={(event) => handleMenuToggle(event, conversation.sessionId)}
-                      className="rounded p-1 text-pi-muted opacity-70 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:text-pi-text"
-                      title="Conversation actions"
-                      aria-label="Conversation actions"
-                    >
-                      <MoreHorizontal className="h-3.5 w-3.5" />
-                    </button>
-                    {openMenuId === conversation.sessionId && (
-                      <div
-                        className="absolute right-0 z-10 mt-1 w-32 rounded border border-pi-border bg-pi-surface shadow-lg"
-                        onClick={(event) => event.stopPropagation()}
+              conversations.map((conversation) => {
+                const isEditing = editingId === conversation.sessionId;
+                return (
+                  <div key={conversation.sessionId} className="group flex items-center gap-1 min-w-0">
+                    {isEditing ? (
+                      <input
+                        ref={editInputRef}
+                        value={editingValue}
+                        onChange={(e) => setEditingValue(e.target.value)}
+                        onKeyDown={(e) => _handleEditKeyDown(e, conversation)}
+                        onBlur={() => commitEdit(conversation)}
+                        className="flex-1 rounded px-2 py-0.5 text-[12px] bg-pi-bg text-pi-text border border-pi-accent outline-none min-w-0"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setOpenMenuId(null);
+                          onSelectConversation(conversation.sessionId, conversation.sessionPath, conversation.slotId);
+                        }}
+                        onDoubleClick={(e) => {
+                          e.preventDefault();
+                          startEditing(conversation);
+                        }}
+                        className={`flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-[12px] transition-colors min-w-0 ${
+                          conversation.isFocused
+                            ? 'bg-pi-bg text-pi-text'
+                            : 'text-pi-muted hover:bg-pi-bg hover:text-pi-text'
+                        }`}
+                        title={conversation.label}
                       >
-                        <button
-                          className="flex w-full items-center px-3 py-1.5 text-left text-[12px] text-pi-text hover:bg-pi-bg"
-                          onClick={(event) => handleRename(event, conversation)}
-                        >
-                          Rename
-                        </button>
-                        <button
-                          className="flex w-full items-center px-3 py-1.5 text-left text-[12px] text-pi-error hover:bg-pi-bg"
-                          onClick={(event) => handleDelete(event, conversation)}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                        {conversation.isStreaming && (
+                          <span className="w-2 h-2 rounded-full bg-pi-success status-running flex-shrink-0" />
+                        )}
+                        {conversation.slotId && jobBySlotId.has(conversation.slotId) && (
+                          <Briefcase className={`w-3 h-3 flex-shrink-0 ${JOB_PHASE_COLORS[jobBySlotId.get(conversation.slotId)!.phase]}`} />
+                        )}
+                        <span className="truncate">{conversation.label}</span>
+                      </button>
                     )}
+                    <div className="relative flex-shrink-0">
+                      <button
+                        onClick={(event) => handleMenuToggle(event, conversation.sessionId)}
+                        className="rounded p-1 text-pi-muted opacity-70 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:text-pi-text"
+                        title="Conversation actions"
+                        aria-label="Conversation actions"
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </button>
+                      {openMenuId === conversation.sessionId && (
+                        <div
+                          className="absolute right-0 z-10 mt-1 w-32 rounded border border-pi-border bg-pi-surface shadow-lg"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <button
+                            className="flex w-full items-center px-3 py-1.5 text-left text-[12px] text-pi-text hover:bg-pi-bg"
+                            onClick={(event) => handleRename(event, conversation)}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            className="flex w-full items-center px-3 py-1.5 text-left text-[12px] text-pi-error hover:bg-pi-bg"
+                            onClick={(event) => handleDelete(event, conversation)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

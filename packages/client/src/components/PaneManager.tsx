@@ -203,7 +203,7 @@ export function PaneManager({
   };
 
   return (
-    <div className="flex-1 flex px-2 -mt-px overflow-hidden">
+    <div className="flex-1 flex mt-px overflow-hidden">
       {renderNode(layout)}
     </div>
   );
@@ -314,18 +314,12 @@ function SplitContainer({ direction, sizes, onResize, children }: SplitContainer
         <div
           key={`handle-${i}`}
           onMouseDown={handleMouseDown(i)}
-          className={`flex-shrink-0 flex items-center justify-center ${
+          className={`flex-shrink-0 bg-pi-border ${
             isRow
-              ? 'w-1 cursor-col-resize hover:bg-pi-border'
-              : 'h-1 cursor-row-resize hover:bg-pi-border'
+              ? 'w-px cursor-col-resize hover:bg-pi-accent/40'
+              : 'h-px cursor-row-resize hover:bg-pi-accent/40'
           }`}
-        >
-          <div
-            className={`bg-pi-border/50 rounded-full ${
-              isRow ? 'w-0.5 h-6' : 'h-0.5 w-6'
-            }`}
-          />
-        </div>
+        />
       );
     }
   });

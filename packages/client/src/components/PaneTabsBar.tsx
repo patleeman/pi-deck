@@ -70,7 +70,7 @@ export function PaneTabsBar({
   };
 
   return (
-    <div className="flex h-10 items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-pi-border bg-pi-surface px-2 py-1 mx-[8.5px] scrollbar-thin">
+    <div className="flex h-10 items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-pi-border bg-pi-surface px-2 py-1 scrollbar-thin">
       {tabs.map((tab) => {
         const isEditing = tab.id === editingTabId;
         const isDragTarget = dragOverTabId === tab.id && draggingTabId !== tab.id;
