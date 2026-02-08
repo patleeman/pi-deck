@@ -336,16 +336,18 @@ export function JobsPane({
 
   // Fetch jobs on mount / workspace change
   useEffect(() => {
+    if (!workspaceId) return;
     onGetJobs();
   }, [workspaceId, onGetJobs]);
 
   // Fallback poll (PlanJobWatcher handles real-time; this is a safety net)
   useEffect(() => {
+    if (!workspaceId) return;
     const interval = window.setInterval(() => {
       onGetJobs();
     }, 60000);
     return () => window.clearInterval(interval);
-  }, [onGetJobs]);
+  }, [workspaceId, onGetJobs]);
 
   // Handle external view mode requests (from /jobs command)
   useEffect(() => {
