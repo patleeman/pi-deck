@@ -13,6 +13,7 @@ import { StartupDisplay } from './StartupDisplay';
 import { ScopedModelsDialog } from './ScopedModelsDialog';
 import { X, ChevronDown, Send, Square, ImagePlus, Command } from 'lucide-react';
 import { ActivePlanBanner } from './ActivePlanBanner';
+import { ActiveJobBanner } from './ActiveJobBanner';
 
 interface PaneProps {
   pane: PaneData;
@@ -61,6 +62,9 @@ interface PaneProps {
   activePlan: import('@pi-deck/shared').ActivePlanState | null;
   onUpdatePlanTask: (planPath: string, line: number, done: boolean) => void;
   onDeactivatePlan: () => void;
+  // Jobs
+  activeJobs: import('@pi-deck/shared').ActiveJobState[];
+  onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
 }
 
 // Built-in pane commands (UI-only)
@@ -80,6 +84,9 @@ const PANE_COMMANDS: SlashCommand[] = [
   { cmd: '/tree', desc: 'Navigate session tree', action: 'tree' },
   { cmd: '/copy', desc: 'Copy last assistant response', action: 'copy' },
   { cmd: '/scoped-models', desc: 'Configure models for Ctrl+P cycling', action: 'scoped-models' },
+  // Jobs
+  { cmd: '/jobs', desc: 'Open the jobs panel', action: 'jobs' },
+  { cmd: '/jobs new', desc: 'Create a new job', action: 'jobs-new' },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -159,6 +166,8 @@ export function Pane({
   activePlan,
   onUpdatePlanTask,
   onDeactivatePlan,
+  activeJobs,
+  onUpdateJobTask,
 }: PaneProps) {
   const [inputValue, setInputValue] = useState('');
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -780,6 +789,12 @@ export function Pane({
       case 'scoped-models':
         onGetScopedModels();
         break;
+      case 'jobs':
+        window.dispatchEvent(new CustomEvent('pi:openJobs', { detail: { mode: 'list' } }));
+        break;
+      case 'jobs-new':
+        window.dispatchEvent(new CustomEvent('pi:openJobs', { detail: { mode: 'create' } }));
+        break;
       default:
         // Backend command
         if (action.startsWith('backend:')) {
@@ -1370,6 +1385,18 @@ export function Pane({
           onDeactivate={onDeactivatePlan}
         />
       )}
+
+      {/* Active job banner — show if this pane's slot matches an active job */}
+      {activeJobs
+        .filter(j => j.sessionSlotId === pane.sessionSlotId)
+        .map(j => (
+          <ActiveJobBanner
+            key={j.jobPath}
+            activeJob={j}
+            onToggleTask={onUpdateJobTask}
+          />
+        ))
+      }
 
       {/* Input area */}
       <div className="border-t border-pi-border">

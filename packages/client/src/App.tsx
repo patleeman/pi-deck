@@ -310,6 +310,27 @@ function App() {
     }
   }, [ws.workspaces, ws.activeWorkspaceId, notifications]);
 
+  // Notify on job phase changes (auto-promote)
+  useEffect(() => {
+    const handleJobPromoted = (e: CustomEvent<{ workspaceId: string; job: { title: string; phase: string } }>) => {
+      const { job } = e.detail;
+      const phaseLabels: Record<string, string> = {
+        planning: 'Planning',
+        ready: 'Ready',
+        executing: 'Executing',
+        review: 'Review',
+        complete: 'Complete ✓',
+      };
+      const phaseLabel = phaseLabels[job.phase] || job.phase;
+      notifications.notify(`Job → ${phaseLabel}`, {
+        body: job.title,
+      });
+    };
+
+    window.addEventListener('pi:jobPromoted', handleJobPromoted as EventListener);
+    return () => window.removeEventListener('pi:jobPromoted', handleJobPromoted as EventListener);
+  }, [notifications]);
+
   // Clear attention when switching workspace
   useEffect(() => {
     if (ws.activeWorkspaceId) {
@@ -365,8 +386,8 @@ function App() {
 
       const newTabId = createTabId();
       const newPaneId = createPaneId();
-      // Derive label from slot ID: "job-planning-..." → "Job: Planning", "job-executing-..." → "Job: Executing"
-      const phaseMatch = sessionSlotId.match(/^job-(planning|executing)/);
+      // Derive label from slot ID: "job-planning-..." → "Job: Planning", "job-executing-..." → "Job: Executing", "job-review-..." → "Job: Review"
+      const phaseMatch = sessionSlotId.match(/^job-(planning|executing|review)/);
       const label = phaseMatch ? `Job: ${phaseMatch[1].charAt(0).toUpperCase() + phaseMatch[1].slice(1)}` : 'Job';
       const newTab: PaneTabPageState = {
         id: newTabId,
@@ -380,6 +401,22 @@ function App() {
     window.addEventListener('pi:jobSlotCreated', handleJobSlotCreated as EventListener);
     return () => window.removeEventListener('pi:jobSlotCreated', handleJobSlotCreated as EventListener);
   }, [ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
+
+  // Listen for /jobs slash command — open right pane to jobs tab
+  useEffect(() => {
+    const handleOpenJobs = (e: CustomEvent<{ mode?: 'list' | 'create' }>) => {
+      if (ws.activeWorkspace?.path) {
+        const isOpen = ws.rightPaneByWorkspace[ws.activeWorkspace.path] ?? false;
+        if (!isOpen) {
+          ws.setWorkspaceRightPaneOpen(ws.activeWorkspace.path, true);
+        }
+        window.dispatchEvent(new CustomEvent('pi:switchRightPaneTab', { detail: { tab: 'jobs', mode: e.detail?.mode } }));
+      }
+    };
+
+    window.addEventListener('pi:openJobs', handleOpenJobs as EventListener);
+    return () => window.removeEventListener('pi:openJobs', handleOpenJobs as EventListener);
+  }, [ws.activeWorkspace, ws.rightPaneByWorkspace, ws.setWorkspaceRightPaneOpen]);
 
   useEffect(() => {
     const handleWorkspaceEntries = (e: CustomEvent<{ workspaceId: string; path: string; entries: FileInfo[]; requestId?: string }>) => {
@@ -560,9 +597,10 @@ function App() {
     setSelectedFilePathByWorkspace(prev => ({ ...prev, [workspaceId]: path }));
     setViewModeByWorkspace(prev => ({ ...prev, [workspaceId]: 'file' }));
     requestWorkspaceFile(workspaceId, path);
-    // Open right pane if closed
+    // Open right pane if closed, switch to preview tab
     const isOpen = ws.rightPaneByWorkspace[ws.activeWorkspace.path] ?? false;
     if (!isOpen) ws.setWorkspaceRightPaneOpen(ws.activeWorkspace.path, true);
+    window.dispatchEvent(new CustomEvent('pi:switchRightPaneTab', { detail: { tab: 'preview' } }));
   }, [ws.activeWorkspace, ws.rightPaneByWorkspace, ws.setWorkspaceRightPaneOpen, requestWorkspaceFile]);
 
   const handleSelectGitFile = useCallback((path: string) => {
@@ -573,6 +611,7 @@ function App() {
     requestFileDiff(workspaceId, path);
     const isOpen = ws.rightPaneByWorkspace[ws.activeWorkspace.path] ?? false;
     if (!isOpen) ws.setWorkspaceRightPaneOpen(ws.activeWorkspace.path, true);
+    window.dispatchEvent(new CustomEvent('pi:switchRightPaneTab', { detail: { tab: 'preview' } }));
   }, [ws.activeWorkspace, ws.rightPaneByWorkspace, ws.setWorkspaceRightPaneOpen, requestFileDiff]);
 
   useEffect(() => {
@@ -746,17 +785,10 @@ function App() {
       return;
     }
 
-    // ⌘Shift+P - Toggle Plans tab in right pane
-    if (e.key === 'p' && isMod && e.shiftKey) {
+    // ⌘Shift+J - Toggle Jobs tab in right pane
+    if (e.key === 'j' && isMod && e.shiftKey) {
       e.preventDefault();
-      // Open right pane if closed, then switch to Plans tab
-      if (ws.activeWorkspace?.path) {
-        const isOpen = ws.rightPaneByWorkspace[ws.activeWorkspace.path] ?? false;
-        if (!isOpen) {
-          ws.setWorkspaceRightPaneOpen(ws.activeWorkspace.path, true);
-        }
-        window.dispatchEvent(new CustomEvent('pi:switchRightPaneTab', { detail: { tab: 'plans' } }));
-      }
+      window.dispatchEvent(new CustomEvent('pi:openJobs', { detail: { mode: 'list' } }));
       return;
     }
     
@@ -1452,6 +1484,7 @@ function App() {
               onSelectGitFile={handleSelectGitFile}
               selectedFilePath={activeWs ? (selectedFilePathByWorkspace[activeWs.id] || '') : ''}
               openFilePath={activeWs ? openFilePathByWorkspace[activeWs.id] : undefined}
+              activeJobs={activeWs ? (ws.activeJobsByWorkspace[activeWs.id] || []) : undefined}
               onWatchDirectory={activeWs ? activeWorkspaceWatchDirectory : undefined}
               onUnwatchDirectory={activeWs ? activeWorkspaceUnwatchDirectory : undefined}
               className="h-full"
@@ -1587,6 +1620,8 @@ function App() {
               activePlan={ws.activePlanByWorkspace[activeWs.id] ?? null}
               onUpdatePlanTask={ws.updatePlanTask}
               onDeactivatePlan={ws.deactivatePlan}
+              activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
+              onUpdateJobTask={ws.updateJobTask}
             />
           )}
         </div>

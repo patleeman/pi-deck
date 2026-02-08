@@ -18,6 +18,7 @@ import { discoverPlans, readPlan, writePlan, parsePlan, updateTaskInContent, get
 import {
   discoverJobs, readJob, writeJob, createJob, promoteJob, demoteJob,
   updateTaskInContent as updateJobTaskInContent, setJobSessionId,
+  updateJobFrontmatter,
   buildPlanningPrompt, buildExecutionPrompt, buildReviewPrompt,
   getActiveJobStates, parseJob, extractReviewSection,
 } from './job-service.js';
@@ -102,6 +103,134 @@ workspaceManager.on('bufferedEvent', (event: WsServerEvent) => {
   if ('workspaceId' in event) {
     console.log(`[WorkspaceManager] Buffering event for disconnected workspace: ${event.type}`);
   }
+});
+
+// ============================================================================
+// Auto-promote jobs when agent sessions end
+// ============================================================================
+workspaceManager.on('event', (event: WsServerEvent) => {
+  if (event.type !== 'agentEnd' || !('workspaceId' in event)) return;
+
+  const { workspaceId, sessionSlotId } = event as { workspaceId: string; sessionSlotId?: string };
+  if (!sessionSlotId) return;
+
+  // Run async logic outside the synchronous handler
+  setImmediate(async () => {
+    try {
+      const workspace = workspaceManager.getWorkspace(workspaceId);
+      if (!workspace) return;
+
+      // Find jobs whose session slot matches the one that just ended
+      const jobs = discoverJobs(workspace.path);
+      const matchingJob = jobs.find(j =>
+        (j.phase === 'executing' && j.frontmatter.executionSessionId === sessionSlotId) ||
+        (j.phase === 'review' && j.frontmatter.reviewSessionId === sessionSlotId)
+      );
+      if (!matchingJob) return;
+
+      if (matchingJob.phase === 'executing') {
+        // Check if the job has a ## Review section
+        const { content } = readJob(matchingJob.path);
+        const reviewSection = extractReviewSection(content);
+
+        if (reviewSection) {
+          console.log(`[Jobs] Auto-promoting job "${matchingJob.title}" from executing → review`);
+          const { job } = promoteJob(matchingJob.path);
+
+          // Spin up review agent session
+          const orchestrator = workspaceManager.getOrchestrator(workspaceId);
+          const reviewSlotId = `job-review-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+          const slotResult = await orchestrator.createSlot(reviewSlotId);
+
+          // Apply stored thinking level preference
+          const uiState = uiStateStore.loadState();
+          const storedThinkingLevel = uiState.thinkingLevels[workspace.path];
+          if (storedThinkingLevel) {
+            orchestrator.setThinkingLevel(reviewSlotId, storedThinkingLevel);
+            slotResult.state = await orchestrator.getState(reviewSlotId);
+          }
+
+          // Store review session ID in frontmatter
+          setJobSessionId(matchingJob.path, 'reviewSessionId', reviewSlotId);
+
+          // Broadcast slot created + job promoted
+          broadcastToWorkspace(workspaceId, {
+            type: 'sessionSlotCreated',
+            workspaceId,
+            sessionSlotId: reviewSlotId,
+            state: slotResult.state,
+            messages: slotResult.messages,
+          });
+
+          syncIntegration.createSlot(workspaceId, reviewSlotId);
+          syncIntegration.setQueuedMessages(workspaceId, reviewSlotId, { steering: [], followUp: [] });
+
+          broadcastToWorkspace(workspaceId, {
+            type: 'jobPromoted',
+            workspaceId,
+            jobPath: matchingJob.path,
+            job,
+            sessionSlotId: reviewSlotId,
+          });
+
+          // Refresh jobs list + active jobs
+          const updatedJobs = discoverJobs(workspace.path);
+          broadcastToWorkspace(workspaceId, { type: 'jobsList', workspaceId, jobs: updatedJobs });
+          syncIntegration.setJobs(workspaceId, updatedJobs);
+
+          const activeJobs = getActiveJobStates(workspace.path);
+          broadcastToWorkspace(workspaceId, { type: 'activeJob', workspaceId, activeJobs });
+          syncIntegration.setActiveJobs(workspaceId, activeJobs);
+
+          // Send the review prompt
+          const reviewPrompt = buildReviewPrompt(matchingJob.path);
+          const initialMessage = `${reviewPrompt}\n\nPlease read the job file and execute the review steps.`;
+          await orchestrator.prompt(reviewSlotId, initialMessage);
+        } else {
+          // No review section — auto-promote executing → complete (skip review)
+          console.log(`[Jobs] Auto-promoting job "${matchingJob.title}" from executing → complete (no review section)`);
+          const { job } = promoteJob(matchingJob.path, 'complete');
+
+          broadcastToWorkspace(workspaceId, {
+            type: 'jobPromoted',
+            workspaceId,
+            jobPath: matchingJob.path,
+            job,
+          });
+
+          const updatedJobs = discoverJobs(workspace.path);
+          broadcastToWorkspace(workspaceId, { type: 'jobsList', workspaceId, jobs: updatedJobs });
+          syncIntegration.setJobs(workspaceId, updatedJobs);
+
+          const activeJobs = getActiveJobStates(workspace.path);
+          broadcastToWorkspace(workspaceId, { type: 'activeJob', workspaceId, activeJobs });
+          syncIntegration.setActiveJobs(workspaceId, activeJobs);
+        }
+      } else if (matchingJob.phase === 'review') {
+        // Auto-promote review → complete
+        console.log(`[Jobs] Auto-promoting job "${matchingJob.title}" from review → complete`);
+        const { job } = promoteJob(matchingJob.path);
+
+        broadcastToWorkspace(workspaceId, {
+          type: 'jobPromoted',
+          workspaceId,
+          jobPath: matchingJob.path,
+          job,
+        });
+
+        // Refresh jobs list + active jobs
+        const updatedJobs = discoverJobs(workspace.path);
+        broadcastToWorkspace(workspaceId, { type: 'jobsList', workspaceId, jobs: updatedJobs });
+        syncIntegration.setJobs(workspaceId, updatedJobs);
+
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(workspaceId, { type: 'activeJob', workspaceId, activeJobs });
+        syncIntegration.setActiveJobs(workspaceId, activeJobs);
+      }
+    } catch (err) {
+      console.error(`[Jobs] Auto-promote failed:`, err);
+    }
+  });
 });
 
 // Health check endpoint
@@ -2049,12 +2178,15 @@ async function handleMessage(
         let sessionSlotId: string | undefined;
         const orchestrator = workspaceManager.getOrchestrator(message.workspaceId);
 
-        // If promoted to planning or executing, spin up a conversation
-        if (job.phase === 'planning' || job.phase === 'executing') {
+        // If promoted to planning, executing, or review, spin up a conversation
+        if (job.phase === 'planning' || job.phase === 'executing' || job.phase === 'review') {
 
           if (job.phase === 'executing' && job.frontmatter.executionSessionId) {
             // Reuse existing execution session (e.g., demoted from review, now re-promoted)
             sessionSlotId = job.frontmatter.executionSessionId;
+          } else if (job.phase === 'review' && job.frontmatter.reviewSessionId) {
+            // Reuse existing review session
+            sessionSlotId = job.frontmatter.reviewSessionId;
           } else {
             // Create a new session slot
             const slotId = `job-${job.phase}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -2079,15 +2211,23 @@ async function handleMessage(
             });
 
             // Store the session ID in frontmatter
-            const sessionField = job.phase === 'planning' ? 'planningSessionId' : 'executionSessionId';
+            const sessionField = job.phase === 'planning'
+              ? 'planningSessionId'
+              : job.phase === 'review'
+              ? 'reviewSessionId'
+              : 'executionSessionId';
             setJobSessionId(message.jobPath, sessionField, slotId);
 
             // Send the initial prompt
             const prompt = job.phase === 'planning'
               ? buildPlanningPrompt(message.jobPath)
+              : job.phase === 'review'
+              ? buildReviewPrompt(message.jobPath)
               : buildExecutionPrompt(message.jobPath);
             const initialMessage = job.phase === 'planning'
               ? `${prompt}\n\nPlease read the job file and help me create a plan.`
+              : job.phase === 'review'
+              ? `${prompt}\n\nPlease read the job file and execute the review steps.`
               : `${prompt}\n\nPlease read the job file and begin working through the tasks.`;
             await orchestrator.prompt(slotId, initialMessage);
           }
@@ -2203,6 +2343,66 @@ async function handleMessage(
         send(ws, {
           type: 'error',
           message: `Failed to update job task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'deleteJob': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        await unlink(message.jobPath);
+
+        // Refresh jobs list + active jobs
+        const jobs = discoverJobs(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
+
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'activeJob', workspaceId: message.workspaceId, activeJobs });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to delete job: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
+    case 'renameJob': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const { content } = readJob(message.jobPath);
+        const updatedContent = updateJobFrontmatter(content, {
+          title: message.newTitle,
+          updated: new Date().toISOString(),
+        });
+        const job = writeJob(message.jobPath, updatedContent);
+
+        broadcastToWorkspace(message.workspaceId, {
+          type: 'jobSaved',
+          workspaceId: message.workspaceId,
+          jobPath: message.jobPath,
+          job,
+        });
+
+        // Refresh jobs list + active jobs
+        const jobs = discoverJobs(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'jobsList', workspaceId: message.workspaceId, jobs });
+        syncIntegration.setJobs(message.workspaceId, jobs);
+
+        const activeJobs = getActiveJobStates(workspace.path);
+        broadcastToWorkspace(message.workspaceId, { type: 'activeJob', workspaceId: message.workspaceId, activeJobs });
+        syncIntegration.setActiveJobs(message.workspaceId, activeJobs);
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to rename job: ${err instanceof Error ? err.message : 'Unknown error'}`,
           workspaceId: message.workspaceId,
         });
       }

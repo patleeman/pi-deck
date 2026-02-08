@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback, type CSSProperties, type MouseEvent } from 'react';
-import { MoreHorizontal, MessageSquare, PanelLeftClose } from 'lucide-react';
-import type { FileInfo, GitStatusFile } from '@pi-deck/shared';
+import { useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from 'react';
+import { MoreHorizontal, MessageSquare, PanelLeftClose, Briefcase } from 'lucide-react';
+import type { FileInfo, GitStatusFile, ActiveJobState, JobPhase } from '@pi-deck/shared';
 import { SidebarFileTree } from './SidebarFileTree';
 
 interface ConversationSummary {
@@ -31,6 +31,7 @@ interface ConversationSidebarProps {
   // File watching props (for files section)
   onWatchDirectory?: (path: string) => void;
   onUnwatchDirectory?: (path: string) => void;
+  activeJobs?: ActiveJobState[];
   onCollapseSidebar?: () => void;
   className?: string;
   style?: CSSProperties;
@@ -55,6 +56,7 @@ export function ConversationSidebar({
   onSelectGitFile,
   selectedFilePath,
   openFilePath,
+  activeJobs,
   onWatchDirectory,
   onUnwatchDirectory,
   onCollapseSidebar,
@@ -99,6 +101,25 @@ export function ConversationSidebar({
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   }, [ratios]);
+
+  // Map slotId → active job for quick lookup
+  const jobBySlotId = useMemo(() => {
+    if (!activeJobs || activeJobs.length === 0) return new Map<string, ActiveJobState>();
+    const map = new Map<string, ActiveJobState>();
+    for (const job of activeJobs) {
+      if (job.sessionSlotId) map.set(job.sessionSlotId, job);
+    }
+    return map;
+  }, [activeJobs]);
+
+  const JOB_PHASE_COLORS: Record<JobPhase, string> = {
+    executing: 'text-green-400',
+    planning: 'text-amber-400',
+    review: 'text-purple-400',
+    ready: 'text-sky-400',
+    backlog: 'text-pi-muted',
+    complete: 'text-pi-muted',
+  };
 
   const handleMenuToggle = (event: MouseEvent<HTMLButtonElement>, sessionId: string) => {
     event.stopPropagation();
@@ -171,6 +192,9 @@ export function ConversationSidebar({
                     >
                       {conversation.isStreaming && (
                         <span className="w-2 h-2 rounded-full bg-pi-success status-running flex-shrink-0" />
+                      )}
+                      {conversation.slotId && jobBySlotId.has(conversation.slotId) && (
+                        <Briefcase className={`w-3 h-3 flex-shrink-0 ${JOB_PHASE_COLORS[jobBySlotId.get(conversation.slotId)!.phase]}`} />
                       )}
                       <span className="truncate">{conversation.label}</span>
                     </button>

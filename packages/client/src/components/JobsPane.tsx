@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   Trash2,
   Pencil,
+  Search,
 } from 'lucide-react';
 import type { JobInfo, JobPhase, JobTask, ActiveJobState } from '@pi-deck/shared';
 import { JOB_PHASE_ORDER } from '@pi-deck/shared';
@@ -33,11 +34,103 @@ interface JobsPaneProps {
   onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
   onDeleteJob?: (jobPath: string) => void;
   onRenameJob?: (jobPath: string, newTitle: string) => void;
+  /** External request to switch view mode (from /jobs command) */
+  requestedViewMode?: 'list' | 'create' | null;
+  /** Called after the requested view mode has been applied */
+  onViewModeConsumed?: () => void;
 }
 
 type ViewMode = 'list' | 'detail' | 'editor' | 'create';
 type JobSortMode = 'updated-desc' | 'updated-asc' | 'title-asc' | 'title-desc';
 type JobGroupMode = 'phase' | 'tag' | 'none';
+
+interface JobTemplate {
+  id: string;
+  label: string;
+  tags: string;
+  description: string;
+}
+
+const JOB_TEMPLATES: JobTemplate[] = [
+  {
+    id: 'general',
+    label: 'General',
+    tags: '',
+    description: [
+      '## Description',
+      '<!-- What needs to be done? -->',
+      '',
+      '## Review',
+      '- Run /skill:code-review on all changed files',
+    ].join('\n'),
+  },
+  {
+    id: 'feature',
+    label: 'Feature',
+    tags: 'feature',
+    description: [
+      '## Context',
+      '<!-- What problem does this solve? Why is it needed? -->',
+      '',
+      '## Requirements',
+      '<!-- What should the feature do? List acceptance criteria. -->',
+      '',
+      '## Review',
+      '- Run /skill:code-review on all changed files',
+      '- Run /skill:security-review',
+    ].join('\n'),
+  },
+  {
+    id: 'bugfix',
+    label: 'Bug Fix',
+    tags: 'bugfix',
+    description: [
+      '## Bug Description',
+      '<!-- What is the bug? How to reproduce? -->',
+      '',
+      '## Expected Behavior',
+      '<!-- What should happen instead? -->',
+      '',
+      '## Review',
+      '- Run /skill:code-review on all changed files',
+      '- Verify the bug no longer reproduces',
+    ].join('\n'),
+  },
+  {
+    id: 'refactor',
+    label: 'Refactor',
+    tags: 'refactor',
+    description: [
+      '## Current State',
+      '<!-- What code needs refactoring and why? -->',
+      '',
+      '## Goal',
+      '<!-- What should the code look like after? -->',
+      '',
+      '## Constraints',
+      '<!-- What must not change? (APIs, behavior, etc.) -->',
+      '',
+      '## Review',
+      '- Run /skill:code-review on all changed files',
+      '- Verify all existing tests still pass',
+    ].join('\n'),
+  },
+  {
+    id: 'test',
+    label: 'Tests',
+    tags: 'testing',
+    description: [
+      '## Scope',
+      '<!-- What code needs test coverage? -->',
+      '',
+      '## Coverage Goals',
+      '<!-- Target coverage %, specific edge cases, etc. -->',
+      '',
+      '## Review',
+      '- Run /skill:backfill-tests to verify coverage',
+    ].join('\n'),
+  },
+];
 
 type JobListSection = {
   id: string;
@@ -147,6 +240,8 @@ export function JobsPane({
   onUpdateJobTask,
   onDeleteJob,
   onRenameJob,
+  requestedViewMode,
+  onViewModeConsumed,
 }: JobsPaneProps) {
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [selectedJob, setSelectedJob] = useState<JobInfo | null>(null);
@@ -167,6 +262,7 @@ export function JobsPane({
   // List controls
   const [sortMode, setSortMode] = useState<JobSortMode>('updated-desc');
   const [groupMode, setGroupMode] = useState<JobGroupMode>('phase');
+  const [filterText, setFilterText] = useState('');
 
   // Listen for job events
   useEffect(() => {
@@ -243,13 +339,21 @@ export function JobsPane({
     onGetJobs();
   }, [workspaceId, onGetJobs]);
 
-  // Fallback poll
+  // Fallback poll (PlanJobWatcher handles real-time; this is a safety net)
   useEffect(() => {
     const interval = window.setInterval(() => {
       onGetJobs();
-    }, 10000);
+    }, 60000);
     return () => window.clearInterval(interval);
   }, [onGetJobs]);
+
+  // Handle external view mode requests (from /jobs command)
+  useEffect(() => {
+    if (requestedViewMode) {
+      setViewMode(requestedViewMode);
+      onViewModeConsumed?.();
+    }
+  }, [requestedViewMode, onViewModeConsumed]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -318,6 +422,19 @@ export function JobsPane({
     };
   }, []);
 
+  const handleApplyTemplate = useCallback((template: JobTemplate) => {
+    if (template.id === 'blank') {
+      setNewDescription('');
+      setNewTags('');
+      return;
+    }
+    setNewDescription(template.description);
+    // Only set tags if the user hasn't typed any
+    if (!newTags.trim()) {
+      setNewTags(template.tags);
+    }
+  }, [newTags]);
+
   const handleCreateJob = useCallback(() => {
     if (!newTitle.trim()) return;
 
@@ -344,16 +461,25 @@ export function JobsPane({
 
   const sortedJobs = useMemo(() => sortJobs(jobs, sortMode), [jobs, sortMode]);
 
+  const filteredJobs = useMemo(() => {
+    const q = filterText.trim().toLowerCase();
+    if (!q) return sortedJobs;
+    return sortedJobs.filter(job =>
+      job.title.toLowerCase().includes(q) ||
+      job.tags.some(tag => tag.toLowerCase().includes(q))
+    );
+  }, [sortedJobs, filterText]);
+
   const groupedSections = useMemo<JobListSection[]>(() => {
     if (groupMode === 'none') {
-      return [{ id: 'all', label: 'All Jobs', jobs: sortedJobs, kind: 'all' }];
+      return [{ id: 'all', label: 'All Jobs', jobs: filteredJobs, kind: 'all' }];
     }
 
     if (groupMode === 'tag') {
       const groups = new Map<string, { label: string; jobs: JobInfo[] }>();
       const untagged: JobInfo[] = [];
 
-      for (const job of sortedJobs) {
+      for (const job of filteredJobs) {
         if (job.tags.length === 0) {
           untagged.push(job);
           continue;
@@ -401,7 +527,7 @@ export function JobsPane({
       complete: [],
     };
 
-    for (const job of sortedJobs) {
+    for (const job of filteredJobs) {
       groups[job.phase].push(job);
     }
 
@@ -412,7 +538,7 @@ export function JobsPane({
       kind: 'phase',
       phase,
     }));
-  }, [sortedJobs, groupMode]);
+  }, [filteredJobs, groupMode]);
 
   // ===== CREATE VIEW =====
   if (viewMode === 'create') {
@@ -435,6 +561,19 @@ export function JobsPane({
           </button>
         </div>
         <div className="flex-1 flex flex-col p-3 space-y-3 min-h-0">
+          {/* Template selector */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] text-pi-muted">Template:</span>
+            {JOB_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.id}
+                onClick={() => handleApplyTemplate(tpl)}
+                className="px-2 py-0.5 text-[11px] rounded border border-pi-border text-pi-muted hover:text-pi-text hover:border-pi-accent transition-colors"
+              >
+                {tpl.label}
+              </button>
+            ))}
+          </div>
           <div>
             <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Title</label>
             <input
@@ -488,7 +627,19 @@ export function JobsPane({
               New Job
             </button>
 
-            <div className="flex-1" />
+            <div className="flex-1 min-w-0">
+              <div className="relative max-w-[200px]">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-pi-muted pointer-events-none" />
+                <input
+                  type="text"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder="Filter..."
+                  className="w-full pl-6 pr-2 py-1 text-[11px] bg-pi-bg border border-pi-border rounded text-pi-text placeholder-pi-muted/50 focus:outline-none focus:border-pi-accent"
+                  aria-label="Filter jobs by title or tag"
+                />
+              </div>
+            </div>
 
             <div className="flex items-center gap-1.5">
               <label className="text-[11px] text-pi-muted">Sort</label>
@@ -521,13 +672,27 @@ export function JobsPane({
           </div>
         </div>
 
-        {sortedJobs.length === 0 ? (
+        {filteredJobs.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-pi-muted px-4">
             <ClipboardList className="w-8 h-8 mb-2 opacity-30" />
-            <div className="text-[14px] sm:text-[12px] text-center">No jobs yet</div>
-            <div className="text-[12px] sm:text-[11px] mt-1 opacity-70 text-center">
-              Create a job to get started
-            </div>
+            {jobs.length === 0 ? (
+              <>
+                <div className="text-[14px] sm:text-[12px] text-center">No jobs yet</div>
+                <div className="text-[12px] sm:text-[11px] mt-1 opacity-70 text-center">
+                  Create a job to get started
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-[14px] sm:text-[12px] text-center">No matching jobs</div>
+                <button
+                  onClick={() => setFilterText('')}
+                  className="text-[12px] sm:text-[11px] mt-1 text-pi-accent hover:underline"
+                >
+                  Clear filter
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">

@@ -65,6 +65,9 @@ interface PaneManagerProps {
   activePlan?: import('@pi-deck/shared').ActivePlanState | null;
   onUpdatePlanTask?: (planPath: string, line: number, done: boolean) => void;
   onDeactivatePlan?: () => void;
+  // Jobs
+  activeJobs?: import('@pi-deck/shared').ActiveJobState[];
+  onUpdateJobTask?: (jobPath: string, line: number, done: boolean) => void;
 }
 
 // Count total panes in layout
@@ -118,6 +121,8 @@ export function PaneManager({
   activePlan,
   onUpdatePlanTask,
   onDeactivatePlan,
+  activeJobs,
+  onUpdateJobTask,
 }: PaneManagerProps) {
   const totalPanes = countPanes(layout);
 
@@ -178,6 +183,8 @@ export function PaneManager({
         activePlan={activePlan ?? null}
         onUpdatePlanTask={onUpdatePlanTask ?? (() => {})}
         onDeactivatePlan={onDeactivatePlan ?? (() => {})}
+        activeJobs={activeJobs ?? []}
+        onUpdateJobTask={onUpdateJobTask ?? (() => {})}
       />
     );
   };

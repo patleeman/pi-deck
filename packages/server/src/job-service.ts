@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs';
 import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
+import YAML from 'yaml';
 import type { JobPhase, JobFrontmatter, JobInfo, JobTask, PlanStatus } from '@pi-deck/shared';
 
 // Re-export parseTasks from plan-service (same format)
@@ -36,28 +37,17 @@ export function getPreviousPhase(current: JobPhase): JobPhase | null {
 }
 
 // ============================================================================
-// Frontmatter Parsing
+// Frontmatter Parsing (uses `yaml` library)
 // ============================================================================
 
-function cleanYamlScalar(value: string): string {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
-function normalizeTags(tags: string[] | undefined): string[] {
-  if (!tags || tags.length === 0) return [];
+function normalizeTags(tags: unknown): string[] {
+  if (!Array.isArray(tags)) return [];
 
   const normalized: string[] = [];
   const seen = new Set<string>();
 
-  for (const rawTag of tags) {
-    const tag = rawTag.trim();
+  for (const raw of tags) {
+    const tag = String(raw).trim();
     if (!tag) continue;
 
     const key = tag.toLowerCase();
@@ -70,116 +60,62 @@ function normalizeTags(tags: string[] | undefined): string[] {
   return normalized;
 }
 
-function parseInlineYamlStringArray(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
+/**
+ * Extract the raw YAML block and body start position from markdown with frontmatter.
+ * Returns null if no valid frontmatter delimiters found.
+ */
+function extractFrontmatterBlock(content: string): { yamlBlock: string; bodyStart: number } | null {
+  if (!content.startsWith('---')) return null;
 
-  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-    return trimmed
-      .slice(1, -1)
-      .split(',')
-      .map(cleanYamlScalar)
-      .filter(Boolean);
-  }
+  const endIndex = content.indexOf('\n---', 3);
+  if (endIndex === -1) return null;
 
-  if (trimmed.includes(',')) {
-    return trimmed.split(',').map(cleanYamlScalar).filter(Boolean);
-  }
-
-  return [cleanYamlScalar(trimmed)].filter(Boolean);
-}
-
-function parseYamlListItems(lines: string[], startIndex: number): { items: string[]; endIndex: number } {
-  const items: string[] = [];
-  let index = startIndex;
-
-  while (index < lines.length) {
-    const itemMatch = lines[index].match(/^\s*-\s+(.+)\s*$/);
-    if (!itemMatch) break;
-
-    items.push(cleanYamlScalar(itemMatch[1]));
-    index++;
-  }
-
-  return { items, endIndex: index - 1 };
+  const yamlBlock = content.slice(4, endIndex); // skip opening '---\n'
+  const bodyStart = Math.min(endIndex + 4, content.length); // skip '\n---'
+  return { yamlBlock, bodyStart };
 }
 
 export function parseJobFrontmatter(content: string): { frontmatter: JobFrontmatter; bodyStart: number } {
   const frontmatter: JobFrontmatter = {};
 
-  if (!content.startsWith('---')) {
+  const block = extractFrontmatterBlock(content);
+  if (!block) return { frontmatter, bodyStart: 0 };
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = YAML.parse(block.yamlBlock) ?? {};
+  } catch {
+    // Malformed YAML — treat as no frontmatter
     return { frontmatter, bodyStart: 0 };
   }
 
-  const endIndex = content.indexOf('\n---', 3);
-  if (endIndex === -1) {
+  if (typeof parsed !== 'object' || parsed === null) {
     return { frontmatter, bodyStart: 0 };
   }
 
-  const fmBlock = content.slice(4, endIndex); // skip opening '---\n'
-  const lines = fmBlock.split('\n');
+  const str = (v: unknown): string | undefined =>
+    v != null ? String(v) : undefined;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(\w+)\s*:\s*(.*)$/);
-    if (!match) continue;
-
-    const [, key, rawValue] = match;
-    const value = rawValue.trim();
-
-    switch (key) {
-      case 'title':
-        frontmatter.title = value;
-        break;
-      case 'phase':
-        if (PHASE_ORDER.includes(value as JobPhase)) {
-          frontmatter.phase = value as JobPhase;
-        }
-        break;
-      case 'tags': {
-        if (value.length > 0) {
-          frontmatter.tags = normalizeTags(parseInlineYamlStringArray(value));
-          break;
-        }
-
-        const { items, endIndex: consumedEnd } = parseYamlListItems(lines, i + 1);
-        frontmatter.tags = normalizeTags(items);
-        i = Math.max(i, consumedEnd);
-        break;
-      }
-      case 'status':
-        // Legacy plan compatibility
-        if (['draft', 'active', 'complete'].includes(value)) {
-          frontmatter.status = value as PlanStatus;
-        }
-        break;
-      case 'created':
-        frontmatter.created = value;
-        break;
-      case 'updated':
-        frontmatter.updated = value;
-        break;
-      case 'completedAt':
-        frontmatter.completedAt = value;
-        break;
-      case 'completed':
-        // Legacy plan field → map to completedAt
-        frontmatter.completedAt = value;
-        break;
-      case 'planningSessionId':
-        frontmatter.planningSessionId = value;
-        break;
-      case 'executionSessionId':
-        frontmatter.executionSessionId = value;
-        break;
-      case 'reviewSessionId':
-        frontmatter.reviewSessionId = value;
-        break;
-    }
+  if (parsed.title != null) frontmatter.title = str(parsed.title);
+  if (typeof parsed.phase === 'string' && PHASE_ORDER.includes(parsed.phase as JobPhase)) {
+    frontmatter.phase = parsed.phase as JobPhase;
   }
+  frontmatter.tags = normalizeTags(parsed.tags);
+  if (typeof parsed.status === 'string' && ['draft', 'active', 'complete'].includes(parsed.status)) {
+    frontmatter.status = parsed.status as PlanStatus;
+  }
+  if (parsed.created != null) frontmatter.created = str(parsed.created);
+  if (parsed.updated != null) frontmatter.updated = str(parsed.updated);
+  if (parsed.completedAt != null) frontmatter.completedAt = str(parsed.completedAt);
+  // Legacy field
+  if (parsed.completed != null && frontmatter.completedAt == null) {
+    frontmatter.completedAt = str(parsed.completed);
+  }
+  if (parsed.planningSessionId != null) frontmatter.planningSessionId = str(parsed.planningSessionId);
+  if (parsed.executionSessionId != null) frontmatter.executionSessionId = str(parsed.executionSessionId);
+  if (parsed.reviewSessionId != null) frontmatter.reviewSessionId = str(parsed.reviewSessionId);
 
-  const bodyStart = endIndex + 4; // skip '\n---'
-  return { frontmatter, bodyStart: Math.min(bodyStart, content.length) };
+  return { frontmatter, bodyStart: block.bodyStart };
 }
 
 // ============================================================================
@@ -231,65 +167,36 @@ export function parseJob(filePath: string, content: string): JobInfo {
 // Frontmatter Update
 // ============================================================================
 
-function formatYamlInlineValue(value: string): string {
-  // Keep simple scalars unquoted for readability
-  if (/^[a-zA-Z0-9._\/-]+$/.test(value)) {
-    return value;
-  }
-
-  return JSON.stringify(value);
-}
-
-function formatFrontmatterValue(value: string | string[]): string {
-  if (Array.isArray(value)) {
-    if (value.length === 0) return '[]';
-    return `[${value.map(formatYamlInlineValue).join(', ')}]`;
-  }
-
-  return value;
-}
-
 /**
  * Update or set fields in the YAML frontmatter of a job file.
  * Creates frontmatter if it doesn't exist.
+ * Uses the `yaml` library for correct parsing and serialization.
  */
 export function updateJobFrontmatter(
   content: string,
   updates: Record<string, string | string[] | undefined>,
 ): string {
-  if (!content.startsWith('---')) {
-    // No frontmatter — prepend it
-    const lines = ['---'];
-    for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined) {
-        lines.push(`${key}: ${formatFrontmatterValue(value)}`);
-      }
+  const block = extractFrontmatterBlock(content);
+
+  let existing: Record<string, unknown> = {};
+  let body = content;
+
+  if (block) {
+    try {
+      existing = YAML.parse(block.yamlBlock) ?? {};
+    } catch {
+      existing = {};
     }
-    lines.push('---', '');
-    return lines.join('\n') + content;
+    body = content.slice(block.bodyStart);
   }
-
-  const endIndex = content.indexOf('\n---', 3);
-  if (endIndex === -1) return content;
-
-  let fmBlock = content.slice(4, endIndex);
 
   for (const [key, value] of Object.entries(updates)) {
     if (value === undefined) continue;
-
-    const serializedValue = formatFrontmatterValue(value);
-    const regex = Array.isArray(value)
-      ? new RegExp(`^${key}\\s*:.*(?:\\n\\s*-\\s+.*)*$`, 'm')
-      : new RegExp(`^${key}\\s*:.*$`, 'm');
-
-    if (fmBlock.match(regex)) {
-      fmBlock = fmBlock.replace(regex, `${key}: ${serializedValue}`);
-    } else {
-      fmBlock += `\n${key}: ${serializedValue}`;
-    }
+    existing[key] = value;
   }
 
-  return `---\n${fmBlock}\n---${content.slice(endIndex + 4)}`;
+  const yamlStr = YAML.stringify(existing).trimEnd();
+  return `---\n${yamlStr}\n---${body}`;
 }
 
 // ============================================================================
@@ -318,14 +225,11 @@ export function getJobDirectories(workspacePath: string): string[] {
   const workspaceName = basename(workspacePath);
   const dirs: string[] = [];
 
-  // Primary: ~/jobs/<workspace-name>/
-  dirs.push(join(homedir(), 'jobs', workspaceName));
+  // Primary: ~/.pi/agent/jobs/<workspace-name>/
+  dirs.push(join(homedir(), '.pi', 'agent', 'jobs', workspaceName));
 
   // Local: <workspace>/.pi/jobs/
   dirs.push(join(workspacePath, '.pi', 'jobs'));
-
-  // Legacy: ~/plans/<workspace-name>/
-  dirs.push(join(homedir(), 'plans', workspaceName));
 
   return dirs;
 }
@@ -396,7 +300,7 @@ export function writeJob(jobPath: string, content: string): JobInfo {
  */
 export function createJob(workspacePath: string, title: string, description: string, tags?: string[]): { path: string; content: string; job: JobInfo } {
   const workspaceName = basename(workspacePath);
-  const jobsDir = join(homedir(), 'jobs', workspaceName);
+  const jobsDir = join(homedir(), '.pi', 'agent', 'jobs', workspaceName);
 
   // Ensure directory exists
   if (!existsSync(jobsDir)) {
@@ -423,13 +327,17 @@ export function createJob(workspacePath: string, title: string, description: str
 
   const isoNow = now.toISOString();
   const normalizedTags = normalizeTags(tags);
+  const fmObj: Record<string, unknown> = {
+    title,
+    phase: 'backlog',
+    tags: normalizedTags,
+    created: isoNow,
+    updated: isoNow,
+  };
+  const yamlStr = YAML.stringify(fmObj).trimEnd();
   const content = [
-    '---',
-    `title: ${title}`,
-    'phase: backlog',
-    `tags: ${formatFrontmatterValue(normalizedTags)}`,
-    `created: ${isoNow}`,
-    `updated: ${isoNow}`,
+    `---`,
+    yamlStr,
     '---',
     '',
     `# ${title}`,

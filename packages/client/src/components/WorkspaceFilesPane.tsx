@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import { FileText, LoaderCircle, ChevronRight, ClipboardList, Eye, GitBranch } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -118,6 +118,27 @@ export function WorkspaceFilesPane({
     });
   };
 
+  // Listen for tab switch events (from /jobs command, keyboard shortcuts, etc.)
+  const [jobsViewMode, setJobsViewMode] = useState<'list' | 'create' | null>(null);
+
+  useEffect(() => {
+    const handleSwitchTab = (e: CustomEvent<{ tab: string; mode?: string }>) => {
+      const tab = e.detail.tab;
+      if (tab === 'jobs' || tab === 'preview' || tab === 'plans') {
+        setActiveTabForWorkspace(tab === 'plans' ? 'jobs' : tab as TabType);
+      }
+      if (tab === 'jobs' && e.detail.mode) {
+        setJobsViewMode(e.detail.mode as 'list' | 'create');
+      }
+    };
+    window.addEventListener('pi:switchRightPaneTab', handleSwitchTab as EventListener);
+    return () => window.removeEventListener('pi:switchRightPaneTab', handleSwitchTab as EventListener);
+  }, [workspaceId]);
+
+  // Clear the jobs view mode override after it's been consumed
+  const handleJobsViewModeConsumed = useCallback(() => {
+    setJobsViewMode(null);
+  }, []);
 
   // Look up content: try exact path, then absolute version
   const absolutePath = selectedFilePath && !selectedFilePath.startsWith('/') && !selectedFilePath.startsWith('~/')
@@ -204,6 +225,8 @@ export function WorkspaceFilesPane({
             onUpdateJobTask={onUpdateJobTask}
             onDeleteJob={onDeleteJob}
             onRenameJob={onRenameJob}
+            requestedViewMode={jobsViewMode}
+            onViewModeConsumed={handleJobsViewModeConsumed}
           />
         </div>
       )}

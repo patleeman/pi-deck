@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -9,15 +9,12 @@ import {
   extractReviewSection,
   setJobSessionId,
   buildReviewPrompt,
-  getActiveJobStates,
 } from '../../src/job-service.js';
 
 const TEST_DIR = join(tmpdir(), 'pi-job-auto-promote-test-' + Date.now());
-const FAKE_WORKSPACE = join(TEST_DIR, 'workspace');
 
 beforeAll(() => {
-  // Create the workspace jobs directory that getActiveJobStates expects
-  mkdirSync(join(TEST_DIR, 'workspace'), { recursive: true });
+  mkdirSync(TEST_DIR, { recursive: true });
 });
 
 afterAll(() => {
@@ -115,13 +112,6 @@ updated: 2026-02-08T00:00:00.000Z
 
 describe('getActiveJobStates includes review phase', () => {
   it('returns review-phase jobs with reviewSessionId as sessionSlotId', () => {
-    // Create a jobs directory in the expected location for discovery
-    const workspaceName = 'auto-promote-workspace';
-    const workspaceDir = join(TEST_DIR, workspaceName);
-    mkdirSync(workspaceDir, { recursive: true });
-
-    // getActiveJobStates looks in ~/jobs/<workspace-name>/
-    // We can't easily mock that, so test via parseJob + the mapping logic directly
     const content = `---
 title: Review job
 phase: review
