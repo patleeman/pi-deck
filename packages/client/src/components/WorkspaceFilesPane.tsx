@@ -61,8 +61,8 @@ interface WorkspaceFilesPaneProps {
   onUpdatePlanTask: (planPath: string, line: number, done: boolean) => void;
   // Jobs
   activeJobs: ActiveJobState[];
-  onGetJobs: () => void;
-  onGetJobContent: (jobPath: string) => void;
+  onGetJobs: (workspaceId?: string) => void;
+  onGetJobContent: (jobPath: string, workspaceId?: string) => void;
   onCreateJob: (title: string, description: string, tags?: string[]) => void;
   onSaveJob: (jobPath: string, content: string) => void;
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;

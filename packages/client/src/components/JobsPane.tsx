@@ -25,8 +25,8 @@ import { CodeMirrorEditor } from './CodeMirrorEditor';
 interface JobsPaneProps {
   workspaceId: string;
   activeJobs: ActiveJobState[];
-  onGetJobs: () => void;
-  onGetJobContent: (jobPath: string) => void;
+  onGetJobs: (workspaceId?: string) => void;
+  onGetJobContent: (jobPath: string, workspaceId?: string) => void;
   onCreateJob: (title: string, description: string, tags?: string[]) => void;
   onSaveJob: (jobPath: string, content: string) => void;
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
@@ -251,6 +251,7 @@ export function JobsPane({
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['phase:complete']));
   const autosaveTimerRef = useRef<number | null>(null);
   const lastSavedContentRef = useRef<string>('');
+  const viewModeRef = useRef<ViewMode>('list');
   const [menuOpenForJob, setMenuOpenForJob] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -264,11 +265,21 @@ export function JobsPane({
   const [groupMode, setGroupMode] = useState<JobGroupMode>('phase');
   const [filterText, setFilterText] = useState('');
 
+  // Keep viewMode ref in sync for use in event handlers without adding to deps
+  viewModeRef.current = viewMode;
+
   // Listen for job events
   useEffect(() => {
     const handleJobsList = (e: CustomEvent<{ workspaceId: string; jobs: JobInfo[] }>) => {
       if (e.detail.workspaceId === workspaceId) {
         setJobs(e.detail.jobs);
+        // Re-fetch content when viewing a job that was updated externally (e.g., agent wrote to the file)
+        if (selectedJob && viewModeRef.current === 'detail') {
+          const updated = e.detail.jobs.find(j => j.path === selectedJob.path);
+          if (updated && updated.updatedAt !== selectedJob.updatedAt) {
+            onGetJobContent(selectedJob.path, workspaceId);
+          }
+        }
       }
     };
 
@@ -286,7 +297,7 @@ export function JobsPane({
         if (selectedJob?.path === e.detail.jobPath) {
           setSelectedJob(e.detail.job);
         }
-        onGetJobs();
+        onGetJobs(workspaceId);
       }
     };
 
@@ -295,9 +306,9 @@ export function JobsPane({
         if (selectedJob?.path === e.detail.jobPath) {
           setSelectedJob(e.detail.job);
           // Re-fetch content since promotion may have updated frontmatter
-          onGetJobContent(e.detail.jobPath);
+          onGetJobContent(e.detail.jobPath, workspaceId);
         }
-        onGetJobs();
+        onGetJobs(workspaceId);
       }
     };
 
@@ -305,9 +316,9 @@ export function JobsPane({
       if (e.detail.workspaceId === workspaceId) {
         if (selectedJob?.path === e.detail.jobPath) {
           setSelectedJob(e.detail.job);
-          onGetJobContent(e.detail.jobPath);
+          onGetJobContent(e.detail.jobPath, workspaceId);
         }
-        onGetJobs();
+        onGetJobs(workspaceId);
       }
     };
 
@@ -337,14 +348,14 @@ export function JobsPane({
   // Fetch jobs on mount / workspace change
   useEffect(() => {
     if (!workspaceId) return;
-    onGetJobs();
+    onGetJobs(workspaceId);
   }, [workspaceId, onGetJobs]);
 
   // Fallback poll (PlanJobWatcher handles real-time; this is a safety net)
   useEffect(() => {
     if (!workspaceId) return;
     const interval = window.setInterval(() => {
-      onGetJobs();
+      onGetJobs(workspaceId);
     }, 60000);
     return () => window.clearInterval(interval);
   }, [workspaceId, onGetJobs]);
@@ -389,8 +400,8 @@ export function JobsPane({
   const handleSelectJob = useCallback((job: JobInfo) => {
     setSelectedJob(job);
     setViewMode('detail');
-    onGetJobContent(job.path);
-  }, [onGetJobContent]);
+    onGetJobContent(job.path, workspaceId);
+  }, [onGetJobContent, workspaceId]);
 
   const handleBackToList = useCallback(() => {
     setViewMode('list');
