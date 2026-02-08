@@ -104,7 +104,7 @@ function App() {
   const notifications = useNotifications({ titlePrefix: 'Pi' });
   const isMobile = useIsMobile();
   const isKeyboardVisible = useKeyboardVisible();
-  const { settings, openSettings, isSettingsOpen } = useSettings();
+  const { settings, openSettings, closeSettings, isSettingsOpen } = useSettings();
   const hk = settings.hotkeyOverrides;
   
   const [showBrowser, setShowBrowser] = useState(false);
@@ -112,11 +112,7 @@ function App() {
   // Scoped models for Settings (requested from focused slot)
   const [settingsScopedModels, setSettingsScopedModels] = useState<ScopedModelInfo[]>([]);
   const [needsAttention, setNeedsAttention] = useState<Set<string>>(new Set());
-  // showHotkeys now opens Settings to keyboard section
-  const showHotkeys = false; // kept for backward compat in key handler
-  const setShowHotkeys = useCallback((show: boolean) => {
-    if (show) openSettings('keyboard');
-  }, [openSettings]);
+
   // New feature state - collapse toggles (not fully implemented yet)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_allToolsCollapsed, setAllToolsCollapsed] = useState(false);
@@ -276,6 +272,13 @@ function App() {
       if (tabs.length === 0) continue;
 
       const knownSlotIds = new Set(Object.keys(workspace.slots));
+      // Also treat slots with pending creation requests as non-stale
+      // (prevents race where a newly added tab is pruned before the server
+      // confirms the slot creation)
+      const pendingSlots = sessionSlotRequestsRef.current[workspace.id];
+      if (pendingSlots) {
+        pendingSlots.forEach(id => knownSlotIds.add(id));
+      }
       const cleanTabs = tabs.filter(tab => {
         const paneNodes = collectPaneNodes(tab.layout);
         // Prune tabs where ALL panes reference slots that don't exist
@@ -806,10 +809,10 @@ function App() {
       target.isContentEditable
     ) : false;
 
-    // Escape closes modals
+    // Escape closes modals/settings
     if (e.key === 'Escape') {
-      if (showHotkeys) {
-        setShowHotkeys(false);
+      if (isSettingsOpen) {
+        closeSettings();
         return;
       }
       if (showBrowser) {
@@ -825,7 +828,7 @@ function App() {
     // Configurable hotkeys (checked via matchesHotkey)
     if (matchesHotkey(e, 'showHotkeys', hk)) {
       e.preventDefault();
-      setShowHotkeys(true);
+      openSettings('keyboard');
       return;
     }
     if (matchesHotkey(e, 'openDirectory', hk)) {
@@ -883,7 +886,7 @@ function App() {
       ws.abort(panes.focusedSlotId);
       return;
     }
-  }, [showBrowser, showHotkeys, openSettings, toggleRightPane, isMobile, panes, handleClosePane, ws, activeWorkspaceTabs, hk]);
+  }, [showBrowser, isSettingsOpen, closeSettings, openSettings, toggleRightPane, isMobile, panes, handleClosePane, ws, activeWorkspaceTabs, hk]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -962,7 +965,13 @@ function App() {
     if (!targetTab) return;
 
     const currentActiveTabId = workspaceId === ws.activeWorkspaceId ? activeTabId : activeTabForWorkspace;
-    const targetPaneId = tabInfo?.paneId || targetTab.focusedPaneId || collectPaneNodes(targetTab.layout)[0]?.id;
+    // When targeting the active workspace/tab, use the live focused pane ID from
+    // the usePanes hook. The persisted targetTab.focusedPaneId may be stale because
+    // it's synced asynchronously via useEffect, so clicking a sidebar chat right
+    // after focusing a different pane could read the old value.
+    const isActiveTabTarget = workspaceId === ws.activeWorkspaceId && targetTabId === currentActiveTabId;
+    const liveFocusedPaneId = isActiveTabTarget ? panes.focusedPaneId : null;
+    const targetPaneId = tabInfo?.paneId || liveFocusedPaneId || targetTab.focusedPaneId || collectPaneNodes(targetTab.layout)[0]?.id;
     if (!targetPaneId) return;
 
     const activateWorkspaceAndTab = () => {
@@ -1027,7 +1036,7 @@ function App() {
     if (isMobile) {
       setIsMobileSidebarOpen(false);
     }
-  }, [activeTabId, focusPaneById, isMobile, panes.updatePaneSlot, resolveSessionPath, slotToTabByWorkspace, ws, ws.activeWorkspaceId, ws.activePaneTabByWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace, ws.setActiveWorkspace, ws.switchSession, ws.workspaces]);
+  }, [activeTabId, focusPaneById, isMobile, panes.focusedPaneId, panes.updatePaneSlot, resolveSessionPath, slotToTabByWorkspace, ws, ws.activeWorkspaceId, ws.activePaneTabByWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace, ws.setActiveWorkspace, ws.switchSession, ws.workspaces]);
 
   const handleRenameConversation = useCallback((workspaceId: string, sessionId: string, sessionPath: string | undefined, label: string) => {
     const trimmedLabel = label?.trim() || 'Conversation';
@@ -1236,27 +1245,34 @@ function App() {
   const activeConversations = activeSidebarWorkspace?.conversations ?? [];
   const activeWorkspaceName = activeSidebarWorkspace?.name;
 
-  const tabBarTabs = useMemo(() => {
-    if (!ws.activeWorkspace) return [];
-    return activeWorkspaceTabs.map((tab) => {
-      const tabPanes = collectPaneNodes(tab.layout);
-      const isStreaming = tabPanes.some((pane) => ws.activeWorkspace?.slots[pane.slotId]?.isStreaming);
-      return {
-        id: tab.id,
-        label: tab.label,
-        isActive: tab.id === activeTabId,
-        isStreaming,
-      };
-    });
-  }, [ws.activeWorkspace, activeWorkspaceTabs, activeTabId]);
+  const SETTINGS_TAB_ID = '__settings__';
+
+  // Not memoized — needs to react to isSettingsOpen changes immediately
+  const baseTabs = activeWorkspaceTabs.map((tab) => {
+    if (!ws.activeWorkspace) return { id: tab.id, label: tab.label, isActive: false, isStreaming: false };
+    const tabPanes = collectPaneNodes(tab.layout);
+    const isStreaming = tabPanes.some((pane) => ws.activeWorkspace?.slots[pane.slotId]?.isStreaming);
+    return {
+      id: tab.id,
+      label: tab.label,
+      isActive: !isSettingsOpen && tab.id === activeTabId,
+      isStreaming,
+    };
+  });
+  const tabBarTabs = isSettingsOpen
+    ? [...baseTabs, { id: SETTINGS_TAB_ID, label: '⚙ Settings', isActive: true, isStreaming: false }]
+    : baseTabs;
 
   const handleSelectTab = useCallback((tabId: string) => {
+    if (tabId === SETTINGS_TAB_ID) return; // already on settings
+    // Clicking a real tab closes settings if open
+    if (isSettingsOpen) closeSettings();
     if (!ws.activeWorkspace) return;
     const workspacePath = ws.activeWorkspace.path;
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
     if (!tabs.length) return;
     ws.setPaneTabsForWorkspace(workspacePath, tabs, tabId);
-  }, [ws.activeWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
+  }, [ws.activeWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace, isSettingsOpen, closeSettings]);
 
   const handleAddTab = useCallback(() => {
     if (!ws.activeWorkspace) return;
@@ -1271,11 +1287,21 @@ function App() {
       layout: createSinglePaneLayout(newSlotId, newPaneId),
       focusedPaneId: newPaneId,
     };
+    // Track pending slot request BEFORE updating tabs to prevent the
+    // pruning effect from removing the tab before the server creates the slot.
+    const requested = sessionSlotRequestsRef.current[ws.activeWorkspace.id] || new Set<string>();
+    requested.add(newSlotId);
+    sessionSlotRequestsRef.current[ws.activeWorkspace.id] = requested;
     ws.createSessionSlotForWorkspace(ws.activeWorkspace.id, newSlotId);
     ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
   }, [ws.activeWorkspace, ws.createSessionSlotForWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
   const handleCloseTab = useCallback((tabId: string) => {
+    // Closing the settings tab just closes settings
+    if (tabId === SETTINGS_TAB_ID) {
+      closeSettings();
+      return;
+    }
     if (!ws.activeWorkspace) return;
     const workspacePath = ws.activeWorkspace.path;
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
@@ -1302,6 +1328,7 @@ function App() {
   }, [activeTabId, ws.activeWorkspace, ws.createSessionSlotForWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
   const handleRenameTab = useCallback((tabId: string, label: string) => {
+    if (tabId === SETTINGS_TAB_ID) return;
     if (!ws.activeWorkspace) return;
     const workspacePath = ws.activeWorkspace.path;
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
@@ -1479,9 +1506,8 @@ function App() {
         <DirectoryBrowser
           currentPath={ws.currentBrowsePath}
           entries={ws.directoryEntries}
-          allowedRoots={ws.allowedRoots}
           recentWorkspaces={ws.recentWorkspaces}
-          homeDirectory={ws.homeDirectory || ws.allowedRoots[0] || '/'}
+          homeDirectory={ws.homeDirectory || '/'}
           onNavigate={ws.browseDirectory}
           onOpenWorkspace={(path) => {
             ws.openWorkspace(path);
@@ -1491,21 +1517,7 @@ function App() {
         />
       )}
 
-      {/* Settings modal */}
-      <Settings
-        notificationPermission={notifications.isSupported ? notifications.permission : 'unsupported'}
-        onRequestNotificationPermission={notifications.requestPermission}
-        deployStatus={ws.deployState.status}
-        deployMessage={ws.deployState.message}
-        onDeploy={handleDeploy}
-        models={activeWs?.models || []}
-        scopedModels={settingsScopedModels}
-        onSaveScopedModels={(models) => {
-          const slotId = panes.focusedSlotId || 'default';
-          ws.setScopedModels(slotId, models);
-        }}
-        startupInfo={activeWs?.startupInfo || null}
-      />
+
 
       {/* Connection status banner */}
       <ConnectionStatus isConnected={ws.isConnected} error={ws.error} />
@@ -1607,6 +1619,21 @@ function App() {
                 Open directory {!isMobile && '(⌘O)'}
               </button>
             </div>
+          ) : isSettingsOpen ? (
+            <Settings
+              notificationPermission={notifications.isSupported ? notifications.permission : 'unsupported'}
+              onRequestNotificationPermission={notifications.requestPermission}
+              deployStatus={ws.deployState.status}
+              deployMessage={ws.deployState.message}
+              onDeploy={handleDeploy}
+              models={activeWs.models}
+              scopedModels={settingsScopedModels}
+              onSaveScopedModels={(models) => {
+                const slotId = panes.focusedSlotId || 'default';
+                ws.setScopedModels(slotId, models);
+              }}
+              startupInfo={activeWs.startupInfo || null}
+            />
           ) : (
             <PaneManager
               layout={isMobile 
@@ -1652,7 +1679,7 @@ function App() {
               onOpenSettings={openSettings}
               onExport={(slotId) => ws.exportHtml(slotId)}
               onRenameSession={(slotId, name) => ws.setSessionName(slotId, name)}
-              onShowHotkeys={() => setShowHotkeys(true)}
+              onShowHotkeys={() => openSettings('keyboard')}
               onFollowUp={(slotId, message) => ws.followUp(slotId, message)}
               onReload={handleDeploy}
               // New features
