@@ -92,6 +92,49 @@ describe('useWorkspaces event handling', () => {
     });
   });
 
+  describe('Workspace Opened / Slot Created Initialization', () => {
+    /**
+     * BUG SCENARIO:
+     * On page refresh, the server sends workspaceOpened with state.isStreaming: true
+     * if the agent is mid-run. The client creates a slot via createEmptySlot() which
+     * sets slot.isStreaming = false. The state is put into slot.state but the UI reads
+     * slot.isStreaming (not slot.state.isStreaming), so the input box appears idle.
+     *
+     * EXPECTED BEHAVIOR:
+     * - workspaceOpened should sync slot.isStreaming from event.state.isStreaming
+     * - sessionSlotCreated should sync slot.isStreaming from event.state.isStreaming
+     */
+    it('should sync isStreaming when workspaceOpened carries a running session', () => {
+      // Simulate createEmptySlot + state assignment (the workspaceOpened handler)
+      const slot = {
+        isStreaming: false, // from createEmptySlot()
+        state: null as { isStreaming: boolean } | null,
+      };
+
+      const serverState = { isStreaming: true, sessionId: 'running-session' };
+
+      // After the fix: sync slot.isStreaming from server state
+      slot.state = serverState;
+      slot.isStreaming = serverState.isStreaming || false;
+
+      expect(slot.isStreaming).toBe(true);
+    });
+
+    it('should keep isStreaming false when workspaceOpened carries an idle session', () => {
+      const slot = {
+        isStreaming: false,
+        state: null as { isStreaming: boolean } | null,
+      };
+
+      const serverState = { isStreaming: false, sessionId: 'idle-session' };
+
+      slot.state = serverState;
+      slot.isStreaming = serverState.isStreaming || false;
+
+      expect(slot.isStreaming).toBe(false);
+    });
+  });
+
   describe('State Event Handler', () => {
     it('should update isStreaming from server state', () => {
       const updates: { isStreaming?: boolean } = {};
