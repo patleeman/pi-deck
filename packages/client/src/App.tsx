@@ -242,6 +242,48 @@ function App() {
     }
   }, [panes, isMobile]);
 
+  // Prune tabs whose session slots no longer exist on the server.
+  // After a restart, saved UI state may reference slots that weren't recreated (e.g.,
+  // job or plan sessions). We wait briefly after connection to let the server finish
+  // reporting all valid slots before pruning.
+  const [tabPruningReady, setTabPruningReady] = useState(false);
+  useEffect(() => {
+    if (!ws.isConnected) {
+      setTabPruningReady(false);
+      return;
+    }
+    // Wait for slot recreation to settle (sessionSlotsList → createSessionSlot round trips)
+    const timer = setTimeout(() => setTabPruningReady(true), 2000);
+    return () => clearTimeout(timer);
+  }, [ws.isConnected]);
+
+  useEffect(() => {
+    if (!tabPruningReady) return;
+
+    for (const workspace of ws.workspaces) {
+      const tabs = ws.paneTabsByWorkspace[workspace.path] || [];
+      if (tabs.length === 0) continue;
+
+      const knownSlotIds = new Set(Object.keys(workspace.slots));
+      const cleanTabs = tabs.filter(tab => {
+        const paneNodes = collectPaneNodes(tab.layout);
+        // Prune tabs where ALL panes reference slots that don't exist
+        const allStale = paneNodes.length > 0 && paneNodes.every(pane =>
+          pane.slotId !== 'default' && !knownSlotIds.has(pane.slotId)
+        );
+        return !allStale;
+      });
+
+      if (cleanTabs.length !== tabs.length) {
+        const currentActiveId = ws.activePaneTabByWorkspace[workspace.path];
+        const nextActiveId = cleanTabs.find(t => t.id === currentActiveId)?.id
+          ?? cleanTabs[0]?.id
+          ?? '';
+        ws.setPaneTabsForWorkspace(workspace.path, cleanTabs, nextActiveId);
+      }
+    }
+  }, [tabPruningReady, ws.workspaces, ws.paneTabsByWorkspace, ws.activePaneTabByWorkspace, ws.setPaneTabsForWorkspace]);
+
   useEffect(() => {
     if (!pendingPaneFocus) return;
     if (pendingPaneFocus.workspaceId !== ws.activeWorkspaceId) return;
@@ -1446,8 +1488,6 @@ function App() {
         deployStatus={ws.deployState.status}
         deployMessage={ws.deployState.message}
         onDeploy={handleDeploy}
-        allowedRoots={ws.allowedRoots}
-        onUpdateAllowedRoots={() => {}}
       />
 
       {/* Hotkeys dialog */}
