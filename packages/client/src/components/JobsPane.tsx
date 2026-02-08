@@ -675,7 +675,7 @@ export function JobsPane({
           <div className="flex items-center gap-2">
             <button
               onClick={() => setViewMode('create')}
-              className="flex items-center gap-1.5 px-3 py-1.5 sm:py-1 rounded-md border border-pi-border bg-pi-surface text-pi-text hover:bg-pi-accent/10 hover:border-pi-accent/50 transition-colors text-[12px] sm:text-[11px] font-medium"
+              className="flex items-center gap-1.5 px-3 py-1.5 sm:py-1 rounded-md border border-pi-border/50 text-pi-muted hover:text-pi-text hover:bg-pi-accent/10 hover:border-pi-accent/50 transition-colors text-[12px] sm:text-[11px] font-medium"
             >
               <Plus className="w-3.5 h-3.5" />
               New Job
@@ -868,7 +868,7 @@ export function JobsPane({
 
         {/* Archived — pinned to bottom */}
         {onArchiveJob && (
-          <div className="border-t border-pi-border/30 px-3">
+          <div className="border-t border-pi-border px-3">
             {!showArchived ? (
               <button
                 onClick={handleToggleArchived}
