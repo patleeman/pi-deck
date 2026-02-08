@@ -130,6 +130,10 @@ export function isPathAllowed(path: string, allowedDirectories: string[]): boole
   const normalizedPath = canonicalizePath(path);
   return allowedDirectories.some((allowed) => {
     const normalizedAllowed = canonicalizePath(allowed);
+    // Root directory allows everything
+    if (normalizedAllowed === '/') {
+      return true;
+    }
     return normalizedPath === normalizedAllowed || normalizedPath.startsWith(normalizedAllowed + '/');
   });
 }
