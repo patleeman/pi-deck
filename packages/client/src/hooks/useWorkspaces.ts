@@ -97,6 +97,9 @@ export interface UseWorkspacesReturn {
   // Deploy state
   deployState: DeployState;
 
+  // Update available
+  updateAvailable: { current: string; latest: string } | null;
+
   // Workspace management
   workspaces: WorkspaceState[];
   activeWorkspaceId: string | null;
@@ -306,6 +309,7 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'error' | 'warning' | 'info' } | null>(null);
 
+  const [updateAvailable, setUpdateAvailable] = useState<{ current: string; latest: string } | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceState[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [allowedRoots, setAllowedRoots] = useState<string[]>([]);
@@ -793,6 +797,9 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
         case 'connected': {
           setAllowedRoots(event.allowedRoots);
           setHomeDirectory(event.homeDirectory);
+          if (event.updateAvailable) {
+            setUpdateAvailable(event.updateAvailable);
+          }
           const uiState = event.uiState;
           persistedUIStateRef.current = uiState;
           setDraftInputs(uiState?.draftInputs || {});
@@ -1973,6 +1980,8 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     error,
 
     deployState,
+
+    updateAvailable,
 
     workspaces,
     activeWorkspaceId,

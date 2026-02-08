@@ -36,6 +36,44 @@ const syncIntegration = new SyncIntegration(syncDbPath);
 console.log(`[Sync] Initialized sync database at ${syncDbPath}`);
 const PORT = config.port;
 
+// ============================================================================
+// Version check — fetch latest from npm on startup
+// ============================================================================
+const CURRENT_VERSION = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf-8')
+).version as string;
+
+let updateAvailable: { current: string; latest: string } | null = null;
+
+async function checkForUpdate(): Promise<void> {
+  try {
+    const res = await fetch('https://registry.npmjs.org/pi-deck/latest', {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return;
+    const data = await res.json() as { version?: string };
+    const latest = data.version;
+    if (!latest) return;
+
+    // Simple semver comparison: split, compare each part
+    const cur = CURRENT_VERSION.split('.').map(Number);
+    const lat = latest.split('.').map(Number);
+    const isNewer = lat[0] > cur[0]
+      || (lat[0] === cur[0] && lat[1] > cur[1])
+      || (lat[0] === cur[0] && lat[1] === cur[1] && lat[2] > cur[2]);
+
+    if (isNewer) {
+      updateAvailable = { current: CURRENT_VERSION, latest };
+      console.log(`[Update] New version available: ${CURRENT_VERSION} → ${latest}`);
+    }
+  } catch {
+    // Network error or timeout — silently ignore
+  }
+}
+
+// Fire and forget — don't block startup
+checkForUpdate();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -277,6 +315,7 @@ wss.on('connection', async (ws) => {
     allowedRoots: config.allowedDirectories,
     homeDirectory: homedir(),
     uiState,
+    ...(updateAvailable ? { updateAvailable } : {}),
   });
 
   // Handle incoming messages

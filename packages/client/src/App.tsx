@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Menu, FileText, ChevronLeft } from 'lucide-react';
+import { Menu, FileText, ChevronLeft, X } from 'lucide-react';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { usePanes } from './hooks/usePanes';
 import { useNotifications } from './hooks/useNotifications';
@@ -108,6 +108,7 @@ function App() {
   const hk = settings.hotkeyOverrides;
   
   const [showBrowser, setShowBrowser] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   
   // Scoped models for Settings (requested from focused slot)
   const [settingsScopedModels, setSettingsScopedModels] = useState<ScopedModelInfo[]>([]);
@@ -1505,6 +1506,25 @@ function App() {
 
       {/* Connection status banner */}
       <ConnectionStatus isConnected={ws.isConnected} error={ws.error} />
+
+      {/* Update available banner */}
+      {ws.updateAvailable && !updateDismissed && (
+        <div className="flex items-center justify-between px-3 py-1.5 bg-pi-accent/10 border-b border-pi-accent/30 text-[13px]">
+          <span className="text-pi-text">
+            Update available: <span className="font-semibold text-pi-accent">v{ws.updateAvailable.latest}</span>
+            <span className="text-pi-muted ml-1">(current: v{ws.updateAvailable.current})</span>
+            <span className="text-pi-muted ml-2">—</span>
+            <code className="ml-2 px-1.5 py-0.5 bg-pi-bg rounded text-pi-accent text-[12px]">npm install -g pi-deck@latest</code>
+          </span>
+          <button
+            onClick={() => setUpdateDismissed(true)}
+            className="ml-3 p-0.5 text-pi-muted hover:text-pi-text transition-colors"
+            title="Dismiss"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden" ref={layoutRef}>
         {!isMobile && (

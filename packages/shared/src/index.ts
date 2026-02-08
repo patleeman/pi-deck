@@ -651,6 +651,8 @@ export interface WsConnectedEvent {
   allowedRoots: string[];
   homeDirectory: string;
   uiState: UIState;
+  /** Set when a newer version is available on npm */
+  updateAvailable?: { current: string; latest: string };
 }
 
 // UI State types
