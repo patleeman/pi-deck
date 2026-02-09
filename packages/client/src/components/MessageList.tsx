@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useMemo, memo, type ReactNode, type ErrorInfo } from 'react';
-import type { ChatMessage, MessageContent } from '@pi-deck/shared';
+import type { ChatMessage, MessageContent, ImageContent } from '@pi-deck/shared';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useSettings } from '../contexts/SettingsContext';
 import { DiffDisplay } from './DiffDisplay';
@@ -66,6 +66,11 @@ function getTextContent(content: MessageContent[]): string {
     .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
     .map(c => c.text)
     .join('');
+}
+
+// Extract image content from message
+function getImageContent(content: MessageContent[]): ImageContent[] {
+  return content.filter((c): c is ImageContent => c.type === 'image');
 }
 
 // Get tool calls from message content
@@ -404,10 +409,22 @@ const BashExecutionDisplayMemo = memo(function BashExecutionDisplay({ execution 
 });
 
 // User message display - distinct background like TUI (full-width, cyan/teal tinted)
-const UserMessageMemo = memo(function UserMessage({ text }: { text: string }) {
+const UserMessageMemo = memo(function UserMessage({ text, images }: { text: string; images?: ImageContent[] }) {
   return (
     <div className="-mx-4 bg-pi-user-bg border-l-2 border-pi-accent px-4 py-3 font-mono">
       <InteractiveText content={text} />
+      {images && images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {images.map((img, idx) => (
+            <img
+              key={idx}
+              src={`data:${img.source.mediaType};base64,${img.source.data}`}
+              alt={`Attached image ${idx + 1}`}
+              className="max-w-[300px] max-h-[200px] rounded border border-pi-border object-contain"
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 });
@@ -455,7 +472,8 @@ export const MessageList = memo(function MessageList({
         
         if (msg.role === 'user') {
           const text = getTextContent(msg.content);
-          return <UserMessageMemo key={msgKey} text={text} />;
+          const images = getImageContent(msg.content);
+          return <UserMessageMemo key={msgKey} text={text} images={images.length > 0 ? images : undefined} />;
         }
 
         if (msg.role === 'bashExecution') {
