@@ -3,9 +3,10 @@
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve, extname } from 'path';
 import { existsSync, readFileSync, statSync } from 'fs';
-import { execSync, fork } from 'child_process';
+import { execSync, fork, exec } from 'child_process';
 import { createServer, request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
+import { platform } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -32,6 +33,24 @@ function getFlagValue(name) {
 }
 
 const helpFlag = hasFlag('--help') || hasFlag('-h');
+const noOpenFlag = hasFlag('--no-open');
+
+// ---------------------------------------------------------------------------
+// Browser opener
+// ---------------------------------------------------------------------------
+
+function openBrowser(url) {
+  const plat = platform();
+  const cmd = plat === 'darwin' ? 'open'
+    : plat === 'win32' ? 'start'
+    : 'xdg-open';
+  exec(`${cmd} ${url}`, (err) => {
+    if (err) {
+      // Non-fatal — just log and continue
+      console.log(`[pi-deck] Could not open browser automatically. Visit: ${url}`);
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Routing
@@ -87,6 +106,7 @@ function showServerHelp() {
   Options:
     --build       Build before starting (if not already built)
     --port <n>    Override server port (default: 9741)
+    --no-open     Don't open browser automatically
     -h, --help    Show this help message
 
   The server serves the built client UI and exposes the WebSocket API.
@@ -104,6 +124,7 @@ function showClientHelp() {
   Options:
     --server <url>   URL of the Pi-Deck server (required, e.g. http://remote:9741)
     --port <n>       Local port for the client (default: 9740)
+    --no-open        Don't open browser automatically
     -h, --help       Show this help message
 
   Examples:
@@ -154,8 +175,17 @@ function startServer() {
   console.log('[pi-deck] Starting server...');
   const child = fork(bundledServer, [], {
     cwd: ROOT,
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
     env: { ...process.env },
+  });
+
+  // Open browser when the server signals it's ready
+  child.on('message', (msg) => {
+    if (msg && msg.type === 'ready' && !noOpenFlag) {
+      const port = msg.port || portValue || 9741;
+      const url = `http://localhost:${port}`;
+      openBrowser(url);
+    }
   });
 
   child.on('exit', (code) => {
@@ -312,9 +342,13 @@ function startClient() {
   // ---- Start listening ----
 
   httpServer.listen(port, () => {
+    const url = `http://localhost:${port}`;
     console.log('[pi-deck] Client mode');
-    console.log(`  Local:  http://localhost:${port}`);
+    console.log(`  Local:  ${url}`);
     console.log(`  Server: ${serverUrl}`);
+    if (!noOpenFlag) {
+      openBrowser(url);
+    }
   });
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
