@@ -9,6 +9,113 @@ export { parseTasks } from './plan-service.js';
 import { parseTasks } from './plan-service.js';
 
 // ============================================================================
+// Job Configuration
+// ============================================================================
+
+/**
+ * Schema for the .pi/jobs.json configuration file.
+ *
+ * This configuration file allows customizing where job files are stored.
+ * Without this file, the system uses default locations for backward compatibility.
+ *
+ * Example .pi/jobs.json:
+ * ```json
+ * {
+ *   "locations": ["~/.pi/agent/jobs/my-workspace", ".pi/jobs"],
+ *   "defaultLocation": "~/.pi/agent/jobs/my-workspace"
+ * }
+ * ```
+ */
+export interface JobConfig {
+  /** Array of directory paths to scan for jobs */
+  locations: string[];
+  /** Where new jobs are created (defaults to first location) */
+  defaultLocation?: string;
+}
+
+/**
+ * Load and parse the .pi/jobs.json configuration file from a workspace.
+ * Returns null if the config doesn't exist (backward compatibility).
+ * Throws on invalid JSON or invalid configuration structure.
+ *
+ * Backward compatibility: If .pi/jobs.json doesn't exist, returns null and
+ * the system falls back to default job directory locations.
+ */
+export function loadJobConfig(workspacePath: string): JobConfig | null {
+  const configPath = join(workspacePath, '.pi', 'jobs.json');
+
+  if (!existsSync(configPath)) {
+    return null;
+  }
+
+  try {
+    const rawContent = readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(rawContent);
+
+    // Validate the configuration structure
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Configuration must be a JSON object');
+    }
+
+    if (!Array.isArray(parsed.locations) || parsed.locations.length === 0) {
+      throw new Error('Configuration must have a non-empty "locations" array');
+    }
+
+    // Validate each location is a string
+    for (const loc of parsed.locations) {
+      if (typeof loc !== 'string') {
+        throw new Error(`Location must be a string, got ${typeof loc}`);
+      }
+    }
+
+    // Validate defaultLocation if provided
+    if (parsed.defaultLocation !== undefined && typeof parsed.defaultLocation !== 'string') {
+      throw new Error(`defaultLocation must be a string, got ${typeof parsed.defaultLocation}`);
+    }
+
+    return {
+      locations: parsed.locations,
+      defaultLocation: parsed.defaultLocation,
+    };
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`Failed to parse ${configPath}: Invalid JSON`);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Resolve a location path to an absolute path.
+ * Expands ~ to home directory and resolves relative paths from workspace root.
+ *
+ * This enables flexible path specifications in .pi/jobs.json:
+ * - Absolute paths: "/Users/you/jobs"
+ * - Home paths: "~/.pi/jobs"
+ * - Relative paths: "./jobs", ".pi/jobs" (resolved from workspace root)
+ */
+export function resolveLocationPath(location: string, workspacePath: string): string {
+  // Validate path is a string
+  if (typeof location !== 'string') {
+    throw new Error(`Location must be a string, got ${typeof location}`);
+  }
+
+  let path = location;
+
+  // Expand ~ to home directory
+  if (path.startsWith('~/') || path === '~') {
+    path = join(homedir(), path.slice(1));
+  }
+
+  // If path is relative, resolve from workspace root
+  if (!path.startsWith('/')) {
+    path = resolve(workspacePath, path);
+  }
+
+  return path;
+}
+
+// ============================================================================
 // Phase Helpers
 // ============================================================================
 
@@ -225,6 +332,28 @@ export function updateTaskInContent(content: string, lineNumber: number, done: b
 // ============================================================================
 
 export function getJobDirectories(workspacePath: string): string[] {
+  // Try to load custom configuration
+  try {
+    const config = loadJobConfig(workspacePath);
+
+    if (config) {
+      // Use configured locations
+      return config.locations.map(loc => {
+        const resolvedPath = resolveLocationPath(loc, workspacePath);
+
+        // Warn if configured directory doesn't exist
+        if (!existsSync(resolvedPath)) {
+          console.warn(`[JobService] Configured job directory does not exist: ${resolvedPath}`);
+        }
+
+        return resolvedPath;
+      });
+    }
+  } catch (err) {
+    console.warn(`[JobService] Failed to load job configuration: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Fall back to default behavior for backward compatibility
   const workspaceName = basename(workspacePath);
   const dirs: string[] = [];
 
@@ -299,15 +428,75 @@ export function writeJob(jobPath: string, content: string): JobInfo {
 }
 
 /**
- * Create a new job file in the primary jobs directory.
+ * Create a new job file in the appropriate jobs directory.
+ * Uses location parameter if provided (must be in configured locations),
+ * otherwise uses defaultLocation from config if specified,
+ * otherwise first location,
+ * otherwise falls back to default behavior for backward compatibility.
  */
-export function createJob(workspacePath: string, title: string, description: string, tags?: string[]): { path: string; content: string; job: JobInfo } {
-  const workspaceName = basename(workspacePath);
-  const jobsDir = join(homedir(), '.pi', 'agent', 'jobs', workspaceName);
+export function createJob(
+  workspacePath: string,
+  title: string,
+  description: string,
+  tags?: string[],
+  location?: string,
+): { path: string; content: string; job: JobInfo } {
+  let config: JobConfig | null = null;
+  let jobsDir: string;
+
+  try {
+    config = loadJobConfig(workspacePath);
+
+    // If location is specified, validate it's in the configured locations
+    if (location) {
+      if (config) {
+        const resolvedLocation = resolveLocationPath(location, workspacePath);
+        const availableLocations = config.locations.map(loc => resolveLocationPath(loc, workspacePath));
+        if (availableLocations.includes(resolvedLocation)) {
+          jobsDir = resolvedLocation;
+        } else {
+          throw new Error(`Location "${location}" is not in the configured job locations`);
+        }
+      } else {
+        // No config - check against default locations
+        const defaultLocs = [
+          join(homedir(), '.pi', 'agent', 'jobs', basename(workspacePath)),
+          join(workspacePath, '.pi', 'jobs'),
+        ];
+        if (defaultLocs.includes(location)) {
+          jobsDir = location;
+        } else {
+          throw new Error(`Location "${location}" is not available (no custom config)`);
+        }
+      }
+    } else if (config && config.defaultLocation) {
+      // Use configured default location
+      jobsDir = resolveLocationPath(config.defaultLocation, workspacePath);
+    } else if (config && config.locations.length > 0) {
+      // Use first location from config
+      jobsDir = resolveLocationPath(config.locations[0], workspacePath);
+    } else {
+      // Fall back to default behavior for backward compatibility
+      const workspaceName = basename(workspacePath);
+      jobsDir = join(homedir(), '.pi', 'agent', 'jobs', workspaceName);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('not available')) {
+      throw err; // Re-throw validation errors
+    }
+    console.warn(`[JobService] Failed to load job config for createJob: ${err instanceof Error ? err.message : String(err)}`);
+    // Fall back to default behavior
+    const workspaceName = basename(workspacePath);
+    jobsDir = join(homedir(), '.pi', 'agent', 'jobs', workspaceName);
+  }
 
   // Ensure directory exists
-  if (!existsSync(jobsDir)) {
-    mkdirSync(jobsDir, { recursive: true });
+  try {
+    if (!existsSync(jobsDir)) {
+      mkdirSync(jobsDir, { recursive: true });
+    }
+  } catch (err) {
+    throw new Error(`Failed to create job directory at ${jobsDir}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Generate filename: YYYYMMDD-<slug>.md
@@ -318,9 +507,9 @@ export function createJob(workspacePath: string, title: string, description: str
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
-  
+
   let filePath = join(jobsDir, `${dateStr}-${slug}.md`);
-  
+
   // Handle collision
   let counter = 1;
   while (existsSync(filePath)) {
@@ -514,7 +703,11 @@ export function discoverArchivedJobs(workspacePath: string): JobInfo[] {
  */
 export function buildJobSystemContext(workspacePath: string): string | null {
   const dirs = getJobDirectories(workspacePath);
-  const primaryDir = dirs[0]; // ~/.pi/agent/jobs/<workspace>/
+  const config = loadJobConfig(workspacePath);
+
+  // Determine primary directory (first in list)
+  const primaryDir = dirs[0];
+
   const jobs = discoverJobs(workspacePath);
 
   // Build a brief listing of current jobs
@@ -523,8 +716,17 @@ export function buildJobSystemContext(workspacePath: string): string | null {
     ? `\nCurrent jobs:\n${jobLines}`
     : '\nNo jobs exist yet.';
 
+  // Build directory listing
+  const dirListing = dirs.map(d => `  - ${d}`).join('\n');
+
   return `<job_system>
-You have access to a job management system. Jobs are markdown files with YAML frontmatter stored in: ${primaryDir}
+You have access to a job management system. Jobs are markdown files with YAML frontmatter.
+
+## Job Locations
+Jobs are stored in the following directories:
+${dirListing}
+
+${config ? `Configuration loaded from: .pi/jobs.json` : 'Using default job locations (no .pi/jobs.json config)'}
 
 ## Job File Format
 \`\`\`markdown
@@ -554,7 +756,7 @@ What needs to be done.
 
 ## Managing Jobs
 - **Create a job**: Write a new .md file to ${primaryDir} with the frontmatter format above. Use filename format: YYYYMMDD-slug.md
-- **List jobs**: Read files from ${primaryDir}
+- **List jobs**: Read files from any of the job directories
 - **Update phase**: Edit the \`phase\` field in frontmatter. Update \`updated\` timestamp.
 - **Check off tasks**: Change \`- [ ]\` to \`- [x]\` in the job file.
 - **Complete a job**: Set phase to "complete" and add \`completedAt\` to frontmatter.
@@ -573,7 +775,19 @@ export function buildPlanningPrompt(jobPath: string): string {
   return `<active_job phase="planning">
 You have a job to plan at: ${jobPath}
 Read the job file. It contains a title and description.
+
+Before creating the plan, you MUST:
+1. Explore the codebase to understand the current implementation
+2. Search for relevant files, functions, and existing patterns
+3. Read documentation and configuration files as needed
+4. Gather context about the architecture and conventions used
+
+Do this research yourself — DO NOT include research or exploration tasks in the plan. The plan should only contain concrete implementation steps that will be performed after planning is complete.
+
 Your goal is to create a detailed implementation plan. Ask the user clarifying questions if needed, then write a concrete plan with \`- [ ]\` checkbox tasks back into the job file under a "## Plan" section.
+
+Plan tasks should be actionable implementation steps only (e.g., "Add function X", "Update file Y"). Do not include research tasks like "review current implementation" — you should do that during planning, not put it in the plan.
+
 Group tasks under \`### Phase\` headings. Keep tasks concise and actionable (start with a verb).
 When you're done writing the plan, let the user know so they can review and iterate or mark it as ready.
 </active_job>`;
@@ -612,6 +826,33 @@ export function extractReviewSection(content: string): string | null {
 
   const trimmed = sectionText.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Get job locations for a workspace with metadata.
+ * Returns display info about all configured job locations and which is default.
+ */
+export function getJobLocations(workspacePath: string): Array<{ path: string; isDefault: boolean; displayName: string }> {
+  const config = loadJobConfig(workspacePath);
+  const dirs = getJobDirectories(workspacePath);
+  let defaultDir: string;
+
+  if (config && config.defaultLocation) {
+    defaultDir = resolveLocationPath(config.defaultLocation, workspacePath);
+  } else if (config && config.locations.length > 0) {
+    defaultDir = resolveLocationPath(config.locations[0], workspacePath);
+  } else {
+    // Default to first directory from getJobDirectories
+    defaultDir = dirs[0];
+  }
+
+  return dirs.map(dir => ({
+    path: dir,
+    isDefault: dir === defaultDir,
+    displayName: dir.startsWith(workspacePath)
+      ? `.${dir.slice(workspacePath.length)}` // Relative path
+      : dir.replace(homedir(), '~'), // Replace home directory with ~
+  }));
 }
 
 /**

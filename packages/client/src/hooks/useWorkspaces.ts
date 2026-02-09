@@ -224,7 +224,8 @@ export interface UseWorkspacesReturn {
   activeJobsByWorkspace: Record<string, import('@pi-deck/shared').ActiveJobState[]>;
   getJobs: (workspaceId?: string) => void;
   getJobContent: (jobPath: string, workspaceId?: string) => void;
-  createJob: (title: string, description: string, tags?: string[]) => void;
+  getJobLocations: () => void;
+  createJob: (title: string, description: string, tags?: string[], location?: string) => void;
   saveJob: (jobPath: string, content: string) => void;
   promoteJob: (jobPath: string, toPhase?: import('@pi-deck/shared').JobPhase) => void;
   demoteJob: (jobPath: string, toPhase?: import('@pi-deck/shared').JobPhase) => void;
@@ -1797,6 +1798,10 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
           window.dispatchEvent(new CustomEvent('pi:archivedJobsList', { detail: event }));
           break;
         }
+        case 'jobLocations': {
+          window.dispatchEvent(new CustomEvent('pi:jobLocations', { detail: event }));
+          break;
+        }
         case 'activeJob': {
           if (syncAuthoritativeWorkspacesRef.current.has(event.workspaceId)) {
             break;
@@ -2330,10 +2335,12 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
       if (!id) return;
       send({ type: 'getJobContent', workspaceId: id, jobPath });
     },
-    createJob: (title: string, description: string, tags?: string[]) =>
+    createJob: (title: string, description: string, tags?: string[], location?: string) =>
       withActiveWorkspace((workspaceId) =>
-        send({ type: 'createJob', workspaceId, title, description, tags })
+        send({ type: 'createJob', workspaceId, title, description, tags, location })
       ),
+    getJobLocations: () =>
+      withActiveWorkspace((id) => send({ type: 'getJobLocations', workspaceId: id })),
     saveJob: (jobPath: string, content: string) =>
       withActiveWorkspace((workspaceId) =>
         send({ type: 'saveJob', workspaceId, jobPath, content })

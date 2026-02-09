@@ -373,6 +373,8 @@ export class PiSession extends EventEmitter {
         cacheWrite: msg.usage.cacheWrite || 0,
         total: (msg.usage.input || 0) + (msg.usage.output || 0),
       } : undefined,
+      stopReason: msg.stopReason,
+      errorMessage: msg.errorMessage,
     };
   }
 

@@ -1,0 +1,9 @@
+{
+  "locations": [
+    "~/.pi/agent/jobs/pi-deck",
+    ".pi/jobs",
+    "./custom-jobs-folder",
+    "/absolute/path/to/jobs"
+  ],
+  "defaultLocation": "~/.pi/agent/jobs/pi-deck"
+}

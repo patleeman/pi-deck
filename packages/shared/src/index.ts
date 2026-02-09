@@ -588,7 +588,8 @@ export type WsClientMessage =
   | WsRenameJobMessage
   | WsArchiveJobMessage
   | WsUnarchiveJobMessage
-  | WsGetArchivedJobsMessage;
+  | WsGetArchivedJobsMessage
+  | WsGetJobLocationsMessage;
 
 // ============================================================================
 // WebSocket Messages (Server -> Client)
@@ -1165,7 +1166,8 @@ export type WsServerEvent =
   | WsJobPromotedEvent
   | WsJobTaskUpdatedEvent
   | WsActiveJobEvent
-  | WsArchivedJobsListEvent;
+  | WsArchivedJobsListEvent
+  | WsJobLocationsEvent;
 
 // ============================================================================
 // Data Types
@@ -1233,6 +1235,10 @@ export interface ChatMessage {
   model?: string;
   provider?: string;
   usage?: TokenUsage;
+  /** Stop reason for assistant messages (e.g., 'error', 'aborted', 'complete') */
+  stopReason?: string;
+  /** Error message when stopReason is 'error' */
+  errorMessage?: string;
   // For tool results
   toolCallId?: string;
   toolName?: string;
@@ -1994,6 +2000,23 @@ export interface WsCreateJobMessage extends WorkspaceScopedMessage {
   title: string;
   description: string;
   tags?: string[];
+  /** Optional: specific directory path to create job in (must be in configured locations) */
+  location?: string;
+}
+
+/** Get job locations for a workspace */
+export interface WsGetJobLocationsMessage extends WorkspaceScopedMessage {
+  type: 'getJobLocations';
+}
+
+/** Job location info */
+export interface JobLocationInfo {
+  /** Absolute path to the location */
+  path: string;
+  /** Whether this is the default location for new jobs */
+  isDefault: boolean;
+  /** Display name (relative path from workspace, or full path) */
+  displayName: string;
 }
 
 /** Save job content (autosave from editor) */
@@ -2103,6 +2126,15 @@ export interface WsJobTaskUpdatedEvent {
   workspaceId: string;
   jobPath: string;
   job: JobInfo;
+}
+
+/** Job locations available for creating new jobs */
+export interface WsJobLocationsEvent {
+  type: 'jobLocations';
+  workspaceId: string;
+  locations: JobLocationInfo[];
+  /** Default location (for creating new jobs) */
+  defaultLocation: string;
 }
 
 /** Archived jobs list for a workspace */

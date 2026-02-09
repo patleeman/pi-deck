@@ -1780,6 +1780,7 @@ function App() {
               activeJobs={ws.activeJobsByWorkspace[activeWs!.id] || []}
               onGetJobs={ws.getJobs}
               onGetJobContent={ws.getJobContent}
+              onGetJobLocations={ws.getJobLocations}
               onCreateJob={ws.createJob}
               onSaveJob={ws.saveJob}
               onPromoteJob={ws.promoteJob}
@@ -1851,6 +1852,7 @@ function App() {
             activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
             onGetJobs={ws.getJobs}
             onGetJobContent={ws.getJobContent}
+            onGetJobLocations={ws.getJobLocations}
             onCreateJob={ws.createJob}
             onSaveJob={ws.saveJob}
             onPromoteJob={ws.promoteJob}

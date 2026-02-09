@@ -22,6 +22,7 @@ import {
   buildPlanningPrompt, buildExecutionPrompt, buildReviewPrompt, buildFinalizePrompt,
   getActiveJobStates, parseJob, extractReviewSection,
   archiveJob, unarchiveJob, discoverArchivedJobs,
+  getJobLocations,
 } from './job-service.js';
 import type { SessionOrchestrator } from './session-orchestrator.js';
 import type { WsClientMessage, WsServerEvent, ActivePlanState, ActiveJobState } from '@pi-deck/shared';
@@ -2096,6 +2097,28 @@ async function handleMessage(
       break;
     }
 
+    case 'getJobLocations': {
+      const workspace = workspaceManager.getWorkspace(message.workspaceId);
+      if (!workspace) break;
+      try {
+        const locations = getJobLocations(workspace.path);
+        const defaultLocation = locations.find(l => l.isDefault)?.path || locations[0]?.path;
+        send(ws, {
+          type: 'jobLocations',
+          workspaceId: message.workspaceId,
+          locations,
+          defaultLocation,
+        });
+      } catch (err) {
+        send(ws, {
+          type: 'error',
+          message: `Failed to get job locations: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          workspaceId: message.workspaceId,
+        });
+      }
+      break;
+    }
+
     case 'getJobContent': {
       const workspace = workspaceManager.getWorkspace(message.workspaceId);
       if (!workspace) break;
@@ -2122,7 +2145,13 @@ async function handleMessage(
       const workspace = workspaceManager.getWorkspace(message.workspaceId);
       if (!workspace) break;
       try {
-        const { path: jobPath, job } = createJob(workspace.path, message.title, message.description, message.tags);
+        const { path: jobPath, job } = createJob(
+          workspace.path,
+          message.title,
+          message.description,
+          message.tags,
+          message.location,
+        );
         broadcastToWorkspace(message.workspaceId, {
           type: 'jobSaved',
           workspaceId: message.workspaceId,

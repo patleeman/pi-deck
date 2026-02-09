@@ -30,7 +30,8 @@ interface JobsPaneProps {
   activeJobs: ActiveJobState[];
   onGetJobs: (workspaceId?: string) => void;
   onGetJobContent: (jobPath: string, workspaceId?: string) => void;
-  onCreateJob: (title: string, description: string, tags?: string[]) => void;
+  onGetJobLocations: () => void;
+  onCreateJob: (title: string, description: string, tags?: string[], location?: string) => void;
   onSaveJob: (jobPath: string, content: string) => void;
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onDemoteJob: (jobPath: string, toPhase?: JobPhase) => void;
@@ -241,6 +242,7 @@ export function JobsPane({
   activeJobs: _activeJobs,
   onGetJobs,
   onGetJobContent,
+  onGetJobLocations,
   onCreateJob,
   onSaveJob,
   onPromoteJob,
@@ -273,6 +275,9 @@ export function JobsPane({
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newTags, setNewTags] = useState('');
+  const [jobLocations, setJobLocations] = useState<Array<{ path: string; isDefault: boolean; displayName: string }>>([]);
+  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
+  const [defaultLocation, setDefaultLocation] = useState<string>('');
 
   // List controls
   const [sortMode, setSortMode] = useState<JobSortMode>('updated-desc');
@@ -342,6 +347,16 @@ export function JobsPane({
       }
     };
 
+    const handleJobLocations = useCallback((e: CustomEvent<{ workspaceId: string; locations: Array<{ path: string; isDefault: boolean; displayName: string }>; defaultLocation: string }>) => {
+      if (e.detail.workspaceId === workspaceId) {
+        setJobLocations(e.detail.locations);
+        setDefaultLocation(e.detail.defaultLocation);
+        if (!selectedLocation) {
+          setSelectedLocation(e.detail.defaultLocation);
+        }
+      }
+    }, [workspaceId, selectedLocation]);
+
     const handleError = (e: CustomEvent<{ message: string; workspaceId?: string }>) => {
       if (e.detail.workspaceId === workspaceId && (e.detail.message.includes('job') || e.detail.message.includes('Job'))) {
         setError(e.detail.message);
@@ -354,6 +369,7 @@ export function JobsPane({
     window.addEventListener('pi:jobPromoted', handleJobPromoted as EventListener);
     window.addEventListener('pi:jobTaskUpdated', handleJobTaskUpdated as EventListener);
     window.addEventListener('pi:archivedJobsList', handleArchivedJobsList as EventListener);
+    window.addEventListener('pi:jobLocations', handleJobLocations as EventListener);
     window.addEventListener('pi:error', handleError as EventListener);
 
     return () => {
@@ -363,6 +379,7 @@ export function JobsPane({
       window.removeEventListener('pi:jobPromoted', handleJobPromoted as EventListener);
       window.removeEventListener('pi:jobTaskUpdated', handleJobTaskUpdated as EventListener);
       window.removeEventListener('pi:archivedJobsList', handleArchivedJobsList as EventListener);
+      window.removeEventListener('pi:jobLocations', handleJobLocations as EventListener);
       window.removeEventListener('pi:error', handleError as EventListener);
     };
   }, [workspaceId, selectedJob, onGetJobs, onGetJobContent]);
@@ -389,6 +406,13 @@ export function JobsPane({
       onViewModeConsumed?.();
     }
   }, [requestedViewMode, onViewModeConsumed]);
+
+  // Fetch job locations when entering create mode
+  useEffect(() => {
+    if (viewMode === 'create' && onGetJobLocations) {
+      onGetJobLocations();
+    }
+  }, [viewMode, onGetJobLocations]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -493,7 +517,7 @@ export function JobsPane({
     if (!newTitle.trim()) return;
 
     const tags = parseTagInput(newTags);
-    onCreateJob(newTitle.trim(), newDescription.trim(), tags);
+    onCreateJob(newTitle.trim(), newDescription.trim(), tags, selectedLocation ?? undefined);
 
     setNewTitle('');
     setNewDescription('');
@@ -644,6 +668,23 @@ export function JobsPane({
               }}
             />
           </div>
+          {jobLocations.length > 0 && (
+            <div>
+              <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Save to</label>
+              <select
+                value={selectedLocation ?? defaultLocation}
+                onChange={(e) => setSelectedLocation(e.target.value || null)}
+                className="w-full bg-pi-bg border border-pi-border rounded px-2.5 py-1.5 text-[13px] sm:text-[12px] text-pi-text focus:outline-none focus:border-pi-accent"
+              >
+                <option value="">Default location</option>
+                {jobLocations.map((loc) => (
+                  <option key={loc.path} value={loc.path}>
+                    {loc.displayName} {loc.isDefault && '(default)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-[12px] sm:text-[11px] text-pi-muted mb-1">Tags</label>
             <input

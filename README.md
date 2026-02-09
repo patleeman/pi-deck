@@ -95,6 +95,41 @@ The script will: check for a clean working tree on `main`, bump the version in a
 
 The published package includes a bundled server (`dist/server.js`) and the pre-built client SPA (`packages/client/dist/`). Workspace dependencies are inlined by esbuild; only runtime dependencies (`express`, `better-sqlite3`, etc.) are installed by npm.
 
+## Job Management
+
+Pi-deck integrates with Pi's job management system. Jobs are markdown files with YAML frontmatter that track work through phases (backlog → planning → ready → executing → review → complete).
+
+### Configurable Job Locations
+
+By default, jobs are stored in two locations:
+- `~/.pi/agent/jobs/<workspace-name>/` (primary)
+- `<workspace>/.pi/jobs/` (local)
+
+You can configure custom job directories by creating a `.pi/jobs.json` file in your workspace root:
+
+```json
+{
+  "locations": [
+    "~/.pi/agent/jobs/pi-deck",
+    ".pi/jobs",
+    "./custom-jobs-folder",
+    "/absolute/path/to/jobs"
+  ],
+  "defaultLocation": "~/.pi/agent/jobs/pi-deck"
+}
+```
+
+**Configuration options:**
+- `locations` (required): Array of directory paths to scan for jobs. Supports:
+  - Relative paths (resolved from workspace root): `"./jobs"`, `".pi/jobs"`
+  - Absolute paths: `"/Users/you/projects/jobs"`
+  - Home directory expansion: `"~/.pi/agent/jobs"`
+- `defaultLocation` (optional): Where new jobs are created. If not specified, uses the first location in `locations`.
+
+The configuration file is optional — without it, the default two-location behavior is preserved for backward compatibility.
+
+See `.pi/jobs.json.example` for a template.
+
 ## Configuration
 
 Create a config file at `~/.config/pi-deck/config.json`:

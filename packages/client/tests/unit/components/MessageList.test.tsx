@@ -213,4 +213,45 @@ describe('MessageList', () => {
     expect(screen.getByText('Here is my answer.')).toBeInTheDocument();
     // Thinking may be collapsed by default
   });
+
+  it('displays error messages for assistant messages with stopReason=error', () => {
+    const errorMessage: ChatMessage = {
+      id: 'msg-error',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'I was trying to respond but...' }],
+      timestamp: Date.now(),
+      stopReason: 'error',
+      errorMessage: '429 Rate limit exceeded. Please try again later.',
+    };
+
+    render(
+      <MessageList
+        {...defaultProps}
+        messages={[errorMessage]}
+      />
+    );
+
+    expect(screen.getByText('I was trying to respond but...')).toBeInTheDocument();
+    expect(screen.getByText(/429 Rate limit exceeded/)).toBeInTheDocument();
+  });
+
+  it('displays error message even when assistant has no text content', () => {
+    const errorMessage: ChatMessage = {
+      id: 'msg-error-empty',
+      role: 'assistant',
+      content: [],
+      timestamp: Date.now(),
+      stopReason: 'error',
+      errorMessage: 'Service unavailable (503)',
+    };
+
+    render(
+      <MessageList
+        {...defaultProps}
+        messages={[errorMessage]}
+      />
+    );
+
+    expect(screen.getByText(/Service unavailable \(503\)/)).toBeInTheDocument();
+  });
 });

@@ -49,7 +49,8 @@ interface WorkspaceFilesPaneProps {
   activeJobs: ActiveJobState[];
   onGetJobs: (workspaceId?: string) => void;
   onGetJobContent: (jobPath: string, workspaceId?: string) => void;
-  onCreateJob: (title: string, description: string, tags?: string[]) => void;
+  onGetJobLocations: () => void;
+  onCreateJob: (title: string, description: string, tags?: string[], location?: string) => void;
   onSaveJob: (jobPath: string, content: string) => void;
   onPromoteJob: (jobPath: string, toPhase?: JobPhase) => void;
   onDemoteJob: (jobPath: string, toPhase?: JobPhase) => void;
@@ -86,6 +87,7 @@ export function WorkspaceFilesPane({
   activeJobs,
   onGetJobs,
   onGetJobContent,
+  onGetJobLocations,
   onCreateJob,
   onSaveJob,
   onPromoteJob,
@@ -215,6 +217,7 @@ export function WorkspaceFilesPane({
             activeJobs={activeJobs}
             onGetJobs={onGetJobs}
             onGetJobContent={onGetJobContent}
+            onGetJobLocations={onGetJobLocations}
             onCreateJob={onCreateJob}
             onSaveJob={onSaveJob}
             onPromoteJob={onPromoteJob}

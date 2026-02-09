@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { parseJobFrontmatter, parseJob, updateJobFrontmatter, extractReviewSection, buildReviewPrompt } from '../../src/job-service.js';
+import { parseJobFrontmatter, parseJob, updateJobFrontmatter, extractReviewSection, buildReviewPrompt, buildPlanningPrompt } from '../../src/job-service.js';
 
 const TEST_DIR = join(tmpdir(), 'pi-job-service-test-' + Date.now());
 
@@ -293,6 +293,46 @@ phase: review
 
       expect(prompt).toContain('phase="review"');
       expect(prompt).toContain('general review');
+    });
+  });
+
+  describe('buildPlanningPrompt', () => {
+    it('includes research instructions to explore codebase before planning', () => {
+      const filePath = '/tmp/test-job.md';
+      const prompt = buildPlanningPrompt(filePath);
+
+      expect(prompt).toContain('phase="planning"');
+      expect(prompt).toContain(filePath);
+      expect(prompt).toContain('Before creating the plan, you MUST:');
+      expect(prompt).toContain('Explore the codebase to understand the current implementation');
+      expect(prompt).toContain('Search for relevant files, functions, and existing patterns');
+      expect(prompt).toContain('Read documentation and configuration files as needed');
+      expect(prompt).toContain('Gather context about the architecture and conventions used');
+    });
+
+    it('instructs that research tasks should not be in the plan', () => {
+      const filePath = '/tmp/test-job.md';
+      const prompt = buildPlanningPrompt(filePath);
+
+      expect(prompt).toContain('DO NOT include research or exploration tasks in the plan');
+      expect(prompt).toContain('The plan should only contain concrete implementation steps');
+    });
+
+    it('specifies that plan tasks should be actionable implementation steps only', () => {
+      const filePath = '/tmp/test-job.md';
+      const prompt = buildPlanningPrompt(filePath);
+
+      expect(prompt).toContain('Plan tasks should be actionable implementation steps only');
+      expect(prompt).toContain('e.g., "Add function X", "Update file Y"');
+      expect(prompt).toContain('Do not include research tasks like "review current implementation"');
+    });
+
+    it('includes instructions to do research during planning, not in the plan', () => {
+      const filePath = '/tmp/test-job.md';
+      const prompt = buildPlanningPrompt(filePath);
+
+      expect(prompt).toContain('Do this research yourself');
+      expect(prompt).toContain('you should do that during planning, not put it in the plan');
     });
   });
 });
