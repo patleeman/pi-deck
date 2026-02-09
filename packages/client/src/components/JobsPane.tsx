@@ -910,7 +910,7 @@ export const JobsPane = memo(function JobsPane({
     return (
       <div className="flex flex-col h-full">
         {/* Toolbar */}
-        <div className="h-11 px-3 border-b border-pi-border bg-pi-surface/40 flex items-center">
+        <div className="px-3 py-[7px] border-b border-pi-border bg-pi-surface/40 flex items-center">
           <div className="flex items-center gap-2 w-full">
             <button
               onClick={() => setViewMode('create')}

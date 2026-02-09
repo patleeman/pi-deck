@@ -179,6 +179,10 @@ export const Pane = memo(function Pane({
   const [draftLoaded, setDraftLoaded] = useState(false);
   const prevDraftKeyRef = useRef<string | null>(null);
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const [modelFilter, setModelFilter] = useState('');
+  const [modelHighlight, setModelHighlight] = useState(0);
+  const modelFilterRef = useRef<HTMLInputElement>(null);
+  const modelListRef = useRef<HTMLDivElement>(null);
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
   // 'steer' = immediate interrupt, 'followUp' = queue after current response
   const [streamingInputMode, setStreamingInputMode] = useState<'steer' | 'followUp'>('steer');
@@ -826,6 +830,9 @@ export const Pane = memo(function Pane({
       case 'model':
         setShowSlashMenu(false);
         setShowModelMenu(true);
+        setModelFilter('');
+        setModelHighlight(0);
+        setTimeout(() => modelFilterRef.current?.focus(), 0);
         setShowThinkingMenu(false);
         setInputValue('');
         return;
@@ -1101,6 +1108,9 @@ export const Pane = memo(function Pane({
     if (matchesHotkey(e, 'modelSelector', hk)) {
       e.preventDefault();
       setShowModelMenu(true);
+      setModelFilter('');
+      setModelHighlight(0);
+      setTimeout(() => modelFilterRef.current?.focus(), 0);
       setShowThinkingMenu(false);
       return;
     }
@@ -1324,7 +1334,7 @@ export const Pane = memo(function Pane({
       )}
 
       {/* Header with model/thinking selectors */}
-      <div className="h-8 px-3 border-b border-pi-border flex items-center justify-between gap-3 sm:gap-2 text-[12px]">
+      <div className="px-3 py-[7px] border-b border-pi-border flex items-center justify-between gap-3 sm:gap-2 text-[12px]">
         <div className="flex items-center gap-2 min-w-0">
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_COLORS[sessionStatus]} ${
@@ -1340,7 +1350,7 @@ export const Pane = memo(function Pane({
           {/* Model selector */}
           <div className="relative">
             <button
-              onClick={() => { setShowModelMenu(!showModelMenu); setShowThinkingMenu(false); }}
+              onClick={() => { const next = !showModelMenu; setShowModelMenu(next); if (next) { setModelFilter(''); setModelHighlight(0); setTimeout(() => modelFilterRef.current?.focus(), 0); } setShowThinkingMenu(false); }}
               className="flex items-center gap-1.5 sm:gap-1 p-2 sm:p-0 -m-2 sm:m-0 text-pi-muted hover:text-pi-text transition-colors"
             >
               <span className="text-pi-accent">⚡</span>
@@ -1350,31 +1360,33 @@ export const Pane = memo(function Pane({
             
             {showModelMenu && (() => {
               const pinnedKeys = new Set(settings.pinnedModelKeys || []);
+              const filterLower = modelFilter.toLowerCase();
+              const matchesFilter = (m: ModelInfo) =>
+                !filterLower || (m.name || m.id).toLowerCase().includes(filterLower) || m.provider.toLowerCase().includes(filterLower);
+
               const pinnedModels = pinnedKeys.size > 0
-                ? models.filter(m => pinnedKeys.has(`${m.provider}:${m.id}`))
+                ? models.filter(m => pinnedKeys.has(`${m.provider}:${m.id}`) && matchesFilter(m))
                 : [];
               const unpinnedModels = pinnedKeys.size > 0
-                ? models.filter(m => !pinnedKeys.has(`${m.provider}:${m.id}`))
-                : models;
+                ? models.filter(m => !pinnedKeys.has(`${m.provider}:${m.id}`) && matchesFilter(m))
+                : models.filter(matchesFilter);
+              const allFiltered = [...pinnedModels, ...unpinnedModels];
 
-              const renderModelButton = (model: ModelInfo, isPinned: boolean) => (
-                <button
-                  key={`${model.provider}:${model.id}`}
-                  onClick={() => {
-                    onSetModel(model.provider, model.id);
-                    setShowModelMenu(false);
-                  }}
-                  className={`w-full px-4 py-3 sm:px-3 sm:py-2 text-left text-[14px] sm:text-[13px] hover:bg-pi-surface transition-colors flex items-center gap-2 ${
-                    currentModel?.id === model.id && currentModel?.provider === model.provider ? 'text-pi-accent' : 'text-pi-text'
-                  }`}
-                >
-                  {isPinned && <Star className="w-3 h-3 text-pi-accent flex-shrink-0" />}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate">{model.name || model.id}</div>
-                    <div className="text-[12px] sm:text-[11px] text-pi-muted truncate">{model.provider}</div>
-                  </div>
-                </button>
-              );
+              // Clamp highlight to valid range
+              const clampedHighlight = allFiltered.length === 0 ? -1 : Math.min(modelHighlight, allFiltered.length - 1);
+
+              const scrollHighlightIntoView = (idx: number) => {
+                const listEl = modelListRef.current;
+                if (!listEl) return;
+                const items = listEl.querySelectorAll('[data-model-item]');
+                items[idx]?.scrollIntoView({ block: 'nearest' });
+              };
+
+              const selectModel = (m: ModelInfo) => {
+                onSetModel(m.provider, m.id);
+                setShowModelMenu(false);
+                inputRef.current?.focus();
+              };
 
               return (
                 <>
@@ -1382,12 +1394,71 @@ export const Pane = memo(function Pane({
                     className="fixed inset-0 z-40" 
                     onClick={() => setShowModelMenu(false)} 
                   />
-                  <div className="absolute top-full right-0 mt-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 min-w-[300px] max-h-[300px] overflow-y-auto">
-                    {pinnedModels.map(m => renderModelButton(m, true))}
-                    {pinnedModels.length > 0 && unpinnedModels.length > 0 && (
-                      <div className="border-t border-pi-border my-0.5" />
-                    )}
-                    {unpinnedModels.map(m => renderModelButton(m, false))}
+                  <div className="absolute top-full right-0 mt-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 min-w-[300px] max-h-[300px] flex flex-col">
+                    <div className="px-2 py-1.5 border-b border-pi-border flex-shrink-0">
+                      <input
+                        ref={modelFilterRef}
+                        type="text"
+                        value={modelFilter}
+                        onChange={(e) => { setModelFilter(e.target.value); setModelHighlight(0); }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            e.stopPropagation();
+                            setShowModelMenu(false);
+                            inputRef.current?.focus();
+                          } else if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            const next = Math.min(clampedHighlight + 1, allFiltered.length - 1);
+                            setModelHighlight(next);
+                            scrollHighlightIntoView(next);
+                          } else if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            const next = Math.max(clampedHighlight - 1, 0);
+                            setModelHighlight(next);
+                            scrollHighlightIntoView(next);
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (clampedHighlight >= 0 && allFiltered[clampedHighlight]) {
+                              selectModel(allFiltered[clampedHighlight]);
+                            }
+                          }
+                        }}
+                        placeholder="Filter models..."
+                        className="w-full px-2 py-1 text-[13px] bg-pi-surface border border-pi-border rounded text-pi-text placeholder:text-pi-muted focus:outline-none focus:ring-1 focus:ring-pi-accent"
+                      />
+                    </div>
+                    <div ref={modelListRef} className="overflow-y-auto flex-1">
+                      {allFiltered.map((model, idx) => {
+                        const isPinned = pinnedKeys.has(`${model.provider}:${model.id}`);
+                        const isActive = currentModel?.id === model.id && currentModel?.provider === model.provider;
+                        const isHighlighted = idx === clampedHighlight;
+                        // Show separator between pinned and unpinned
+                        const showSep = isPinned && idx === pinnedModels.length - 1 && unpinnedModels.length > 0;
+
+                        return (
+                          <div key={`${model.provider}:${model.id}`}>
+                            <button
+                              data-model-item
+                              onClick={() => selectModel(model)}
+                              onMouseEnter={() => setModelHighlight(idx)}
+                              className={`w-full px-4 py-3 sm:px-3 sm:py-2 text-left text-[14px] sm:text-[13px] transition-colors flex items-center gap-2 ${
+                                isHighlighted ? 'bg-pi-surface' : ''
+                              } ${isActive ? 'text-pi-accent' : 'text-pi-text'}`}
+                            >
+                              {isPinned && <Star className="w-3 h-3 text-pi-accent flex-shrink-0" />}
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate">{model.name || model.id}</div>
+                                <div className="text-[12px] sm:text-[11px] text-pi-muted truncate">{model.provider}</div>
+                              </div>
+                            </button>
+                            {showSep && <div className="border-t border-pi-border my-0.5" />}
+                          </div>
+                        );
+                      })}
+                      {allFiltered.length === 0 && (
+                        <div className="px-4 py-3 text-[13px] text-pi-muted text-center">No models match</div>
+                      )}
+                    </div>
                   </div>
                 </>
               );
