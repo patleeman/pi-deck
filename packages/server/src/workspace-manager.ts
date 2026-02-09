@@ -248,26 +248,30 @@ export class WorkspaceManager extends EventEmitter {
 
   private subscribeToOrchestrator(workspaceId: string, orchestrator: SessionOrchestrator): () => void {
     const handler = (event: SessionEvent & { sessionSlotId?: string }) => {
-      // Add workspaceId to convert SessionEvent to WsServerEvent
-      const scopedEvent: WsServerEvent = { 
-        ...event, 
-        workspaceId,
-        sessionSlotId: event.sessionSlotId,
-      } as WsServerEvent;
-      
-      const workspace = this.workspaces.get(workspaceId);
-      if (workspace) {
-        if (workspace.clientCount > 0) {
-          // Clients connected - emit the event
-          this.emit('event', scopedEvent);
-        } else {
-          // No clients - buffer the event
-          if (workspace.bufferedEvents.length < workspace.maxBufferedEvents) {
-            workspace.bufferedEvents.push(scopedEvent);
+      try {
+        // Add workspaceId to convert SessionEvent to WsServerEvent
+        const scopedEvent: WsServerEvent = { 
+          ...event, 
+          workspaceId,
+          sessionSlotId: event.sessionSlotId,
+        } as WsServerEvent;
+        
+        const workspace = this.workspaces.get(workspaceId);
+        if (workspace) {
+          if (workspace.clientCount > 0) {
+            // Clients connected - emit the event
+            this.emit('event', scopedEvent);
+          } else {
+            // No clients - buffer the event
+            if (workspace.bufferedEvents.length < workspace.maxBufferedEvents) {
+              workspace.bufferedEvents.push(scopedEvent);
+            }
+            // Also emit so server can log if needed
+            this.emit('bufferedEvent', scopedEvent);
           }
-          // Also emit so server can log if needed
-          this.emit('bufferedEvent', scopedEvent);
         }
+      } catch (error) {
+        console.error(`[WorkspaceManager] Error in event handler for workspace ${workspaceId}:`, error);
       }
     };
 

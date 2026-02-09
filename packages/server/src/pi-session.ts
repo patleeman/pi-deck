@@ -1,5 +1,7 @@
 import { EventEmitter } from 'events';
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import {
   createAgentSession,
   AuthStorage,
@@ -70,6 +72,16 @@ export class PiSession extends EventEmitter {
     });
     await loader.reload();
 
+    // Ensure the session directory exists before creating the SessionManager.
+    // The SDK's getDefaultSessionDir normally handles this, but there are edge
+    // cases (e.g. concurrent cleanup) where the dir can be missing when
+    // _persist() runs, causing an ENOENT crash.
+    const safePath = `--${this.cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+    const sessionDir = join(homedir(), '.pi', 'agent', 'sessions', safePath);
+    if (!existsSync(sessionDir)) {
+      mkdirSync(sessionDir, { recursive: true });
+    }
+
     const { session } = await createAgentSession({
       cwd: this.cwd,
       authStorage: this.authStorage,
@@ -79,7 +91,13 @@ export class PiSession extends EventEmitter {
     });
 
     this.session = session;
-    this.unsubscribe = session.subscribe((event) => this.handleEvent(event));
+    this.unsubscribe = session.subscribe((event) => {
+      try {
+        this.handleEvent(event);
+      } catch (error) {
+        console.error('[PiSession] Error in event handler:', error);
+      }
+    });
 
     // Create and bind the extension UI context
     this.extensionUIContext = new WebExtensionUIContext({

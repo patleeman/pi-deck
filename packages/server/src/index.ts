@@ -2784,7 +2784,38 @@ if (existsSync(clientDistPath)) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Global error handlers – prevent the server from hard-crashing on transient
+// errors (e.g. ENOENT from the Pi SDK when a session directory is missing).
+// ---------------------------------------------------------------------------
+function broadcastError(errorMessage: string): void {
+  const event: WsServerEvent = {
+    type: 'error',
+    message: errorMessage,
+  };
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(event));
+    }
+  }
+}
+
+process.on('uncaughtException', (error) => {
+  console.error('[Server] Uncaught exception (kept alive):', error);
+  broadcastError(`Internal error: ${error instanceof Error ? error.message : String(error)}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled rejection (kept alive):', reason);
+  broadcastError(`Internal error: ${reason instanceof Error ? reason.message : String(reason)}`);
+});
+
 server.listen(PORT, config.host, () => {
   console.log(`[Server] Pi-Deck server running on http://${config.host}:${PORT}`);
   console.log(`[Server] WebSocket endpoint: ws://${config.host}:${PORT}/ws`);
+
+  // Notify parent process (bin/pi-deck.js) that the server is ready
+  if (typeof process.send === 'function') {
+    process.send({ type: 'ready', port: PORT });
+  }
 });

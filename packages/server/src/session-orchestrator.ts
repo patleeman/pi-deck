@@ -473,24 +473,28 @@ export class SessionOrchestrator extends EventEmitter {
 
   private subscribeToSession(slotId: string, session: PiSession): () => void {
     const eventHandler = (event: SessionEvent) => {
-      // Emit event with slotId attached (for backward compatibility)
-      this.emit('event', { ...event, sessionSlotId: slotId });
+      try {
+        // Emit event with slotId attached (for backward compatibility)
+        this.emit('event', { ...event, sessionSlotId: slotId });
 
-      // Forward to sync system for durable state tracking
-      if (this.workspaceId && this.syncIntegration) {
-        this.syncIntegration.handleSessionEvent(this.workspaceId, slotId, event);
-      }
+        // Forward to sync system for durable state tracking
+        if (this.workspaceId && this.syncIntegration) {
+          this.syncIntegration.handleSessionEvent(this.workspaceId, slotId, event);
+        }
 
-      // When a user message starts, the SDK may have consumed a steering message
-      // from the queue. Send updated queue state so the UI clears stale entries.
-      if (event.type === 'messageStart' && event.message.role === 'user') {
-        const queueState = session.getQueuedMessages();
-        this.emit('event', {
-          type: 'queuedMessages',
-          sessionSlotId: slotId,
-          steering: queueState.steering,
-          followUp: queueState.followUp,
-        });
+        // When a user message starts, the SDK may have consumed a steering message
+        // from the queue. Send updated queue state so the UI clears stale entries.
+        if (event.type === 'messageStart' && event.message.role === 'user') {
+          const queueState = session.getQueuedMessages();
+          this.emit('event', {
+            type: 'queuedMessages',
+            sessionSlotId: slotId,
+            steering: queueState.steering,
+            followUp: queueState.followUp,
+          });
+        }
+      } catch (error) {
+        console.error(`[SessionOrchestrator] Error in event handler for slot ${slotId}:`, error);
       }
     };
 
