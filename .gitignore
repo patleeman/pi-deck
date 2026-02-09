@@ -19,6 +19,7 @@ Thumbs.db
 *.log
 npm-debug.log*
 .pi-web-ui.pid
+.pi-deck.pid
 
 # Environment
 .env
