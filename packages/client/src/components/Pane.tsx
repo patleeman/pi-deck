@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, memo } from 'react';
-import type { SessionInfo, ImageAttachment, SlashCommand as BackendSlashCommand, ModelInfo, ThinkingLevel, StartupInfo, ScopedModelInfo, ExtensionUIResponse, CustomUIInputEvent, SessionTreeNode } from '@pi-deck/shared';
+import type { SessionInfo, ImageAttachment, SlashCommand as BackendSlashCommand, ModelInfo, ThinkingLevel, ScopedModelInfo, ExtensionUIResponse, CustomUIInputEvent, SessionTreeNode } from '@pi-deck/shared';
 import type { PaneData } from '../hooks/usePanes';
 import { useSettings } from '../contexts/SettingsContext';
 import { matchesHotkey } from '../hotkeys';
@@ -11,7 +11,7 @@ import { TreeMenu, flattenTree } from './TreeDialog';
 import { QuestionnaireUI } from './QuestionnaireUI';
 import { ExtensionUIDialog } from './ExtensionUIDialog';
 import { CustomUIDialog } from './CustomUIDialog';
-import { StartupDisplay } from './StartupDisplay';
+
 
 import { X, ChevronDown, Send, Square, ImagePlus, Command } from 'lucide-react';
 import { ActivePlanBanner } from './ActivePlanBanner';
@@ -23,7 +23,6 @@ interface PaneProps {
   sessions: SessionInfo[];
   models: ModelInfo[];
   backendCommands: BackendSlashCommand[];
-  startupInfo: StartupInfo | null;
   canClose: boolean;
   onFocus: () => void;
   onClose: () => void;
@@ -126,7 +125,6 @@ export const Pane = memo(function Pane({
   sessions,
   models,
   backendCommands,
-  startupInfo,
   canClose,
   onFocus,
   onClose,
@@ -1556,13 +1554,6 @@ export const Pane = memo(function Pane({
         onScroll={handleMessagesScroll}
         className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-5 relative"
       >
-        {/* Startup overlay - shown when no messages and user hasn't started typing */}
-        {messages.length === 0 && !inputValue.trim() && startupInfo && !bashExecution && !hasInlineDialog && (
-          <div className="absolute inset-0 p-3 bg-pi-surface z-10 transition-opacity duration-200">
-            <StartupDisplay startupInfo={startupInfo} />
-          </div>
-        )}
-        
         <MessageList
           keyPrefix={pane.id}
           messages={messages}

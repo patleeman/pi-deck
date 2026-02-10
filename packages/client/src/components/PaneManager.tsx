@@ -203,7 +203,7 @@ export function PaneManager({
         sessions={sessions}
         models={models}
         backendCommands={backendCommands}
-        startupInfo={workspace?.startupInfo || null}
+
         canClose={totalPanes > 0}
         onFocus={cb.onFocus as () => void}
         onClose={cb.onClose as () => void}
