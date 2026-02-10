@@ -759,7 +759,6 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
     }
 
     if (state.slots) {
-      console.log('[SyncSnapshot] Restoring slots:', Object.keys(state.slots || {}));
       setWorkspaces((prev) =>
         prev.map((ws) => {
           if (ws.id !== workspaceId) return ws;
@@ -773,9 +772,6 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
             // was created before sync started tracking, it will have empty messages.
             // In that case, preserve the existing messages from workspaceOpened.
             const syncHasMessages = slotSnapshot.messages && slotSnapshot.messages.length > 0;
-            const existingMsgCount = existing.messages?.length || 0;
-            
-            console.log(`[SyncSnapshot] Slot ${slotId}: syncMessages=${slotSnapshot.messages?.length || 0}, existingMessages=${existingMsgCount}, syncHasMessages=${syncHasMessages}`);
             
             nextSlots[slotId] = {
               ...existing,
@@ -1092,7 +1088,6 @@ export function useWorkspaces(url: string): UseWorkspacesReturn {
               const existingSlot = workspace.slots[slotInfo.slotId];
               const hasMessages = existingSlot?.messages && existingSlot.messages.length > 0;
               if (slotInfo.loadedSessionId && !hasMessages) {
-                console.log(`[sessionSlotsList] Loading session ${slotInfo.loadedSessionId} into slot ${slotInfo.slotId}`);
                 send({ type: 'switchSession', workspaceId: event.workspaceId, sessionSlotId: slotInfo.slotId, sessionId: slotInfo.loadedSessionId });
               }
               return;
