@@ -237,6 +237,10 @@ export const Pane = memo(function Pane({
   const bashExecution = slot?.bashExecution ?? null;
   const queuedSteering = slot?.queuedMessages?.steering || [];
   const queuedFollowUp = slot?.queuedMessages?.followUp || [];
+  
+  // Optimistic state for clearing queue - hides shelf immediately on clear
+  const [optimisticQueueClear, setOptimisticQueueClear] = useState(false);
+  const hasQueuedMessages = (queuedSteering.length > 0 || queuedFollowUp.length > 0) && !optimisticQueueClear;
 
   // Track session ID to reset scroll when workspace/session changes
   const sessionId = state?.sessionId;
@@ -254,6 +258,18 @@ export const Pane = memo(function Pane({
     }
     prevSessionIdRef.current = sessionId;
   }, [sessionId]);
+  
+  // Reset optimistic queue clear when server sends new queue data
+  // Note: we only depend on queue lengths, NOT optimisticQueueClear
+  // If we depended on optimisticQueueClear, this would run immediately after
+  // we set it and reset it before the server responds
+  useEffect(() => {
+    if (optimisticQueueClear && (queuedSteering.length > 0 || queuedFollowUp.length > 0)) {
+      // Server has new queue data, reset optimistic state
+      setOptimisticQueueClear(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queuedSteering.length, queuedFollowUp.length]);
 
   // Load saved draft input on mount or when slot changes
   useEffect(() => {
@@ -1772,7 +1788,7 @@ export const Pane = memo(function Pane({
           )}
 
           {/* Server-side queued messages indicator (from steer) */}
-          {(queuedSteering.length > 0 || queuedFollowUp.length > 0) && (
+          {hasQueuedMessages && (
             <div className="mb-2 px-2 py-1.5 bg-pi-surface/50 rounded text-[11px] text-pi-muted">
               <div className="flex items-center gap-2">
                 <span>Server queue:</span>
@@ -1784,12 +1800,13 @@ export const Pane = memo(function Pane({
                 )}
                 <button
                   onClick={() => {
-                    onClearQueue();
-                    // Restore queued messages to input
+                    // Optimistically hide shelf and restore text to input
                     const allQueued = [...queuedSteering, ...queuedFollowUp];
                     if (allQueued.length > 0) {
                       setInputValue(allQueued.join('\n'));
                     }
+                    setOptimisticQueueClear(true);
+                    onClearQueue();
                   }}
                   className="text-pi-muted hover:text-pi-text ml-auto"
                 >
