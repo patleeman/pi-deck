@@ -48,22 +48,6 @@ const createSinglePaneLayout = (slotId: string, paneId = createPaneId()): PaneLa
   slotId,
 });
 
-const TAB_LABEL_PATTERN = /^Tab\s+(\d+)$/i;
-
-const getNextTabNumber = (tabs: PaneTabPageState[]): number => {
-  const numbers = tabs
-    .map((tab) => {
-      const match = TAB_LABEL_PATTERN.exec(tab.label.trim());
-      if (!match) return null;
-      const value = Number(match[1]);
-      return Number.isFinite(value) ? value : null;
-    })
-    .filter((value): value is number => value !== null);
-
-  if (numbers.length === 0) return tabs.length + 1;
-  return Math.max(...numbers) + 1;
-};
-
 const truncateLabel = (label: string, maxLength: number): string => {
   if (label.length <= maxLength) return label;
   return label.slice(0, maxLength - 1) + '…';
@@ -1296,7 +1280,7 @@ function App() {
     const newPaneId = createPaneId();
     const newTab: PaneTabPageState = {
       id: newTabId,
-      label: `Tab ${getNextTabNumber(tabs)}`,
+      label: 'New Conversation',
       layout: createSinglePaneLayout(newSlotId, newPaneId),
       focusedPaneId: newPaneId,
     };
@@ -1315,18 +1299,8 @@ function App() {
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
 
     if (tabs.length <= 1) {
-      // Closing the last tab: create a fresh one with a new conversation
-      const newTabId = createTabId();
-      const newSlotId = createSlotId();
-      const newPaneId = createPaneId();
-      const newTab: PaneTabPageState = {
-        id: newTabId,
-        label: `Tab ${getNextTabNumber([])}`,
-        layout: createSinglePaneLayout(newSlotId, newPaneId),
-        focusedPaneId: newPaneId,
-      };
-      ws.createSessionSlotForWorkspace(ws.activeWorkspace.id, newSlotId);
-      ws.setPaneTabsForWorkspace(workspacePath, [newTab], newTabId);
+      // Closing the last tab: remove it and show welcome state (no zombie tabs)
+      ws.setPaneTabsForWorkspace(workspacePath, [], '');
       return;
     }
 

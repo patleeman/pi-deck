@@ -45,6 +45,15 @@ export class SyncIntegration extends EventEmitter {
         jobs,
       });
     });
+
+    // Listen for session changes from watcher
+    this.planJobWatcher.on('sessionsChanged', ({ workspaceId, sessions }) => {
+      this.syncManager.mutate({
+        type: 'sessionsUpdate',
+        workspaceId,
+        sessions,
+      });
+    });
   }
 
   /**

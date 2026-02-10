@@ -33,6 +33,8 @@ interface WatchedWorkspace {
   lastJobUpdate: number;
   lastSessionUpdate: number;
   // Track paths we're not yet watching so we can retry
+  pendingPlanDirs: Set<string>;
+  pendingJobDirs: Set<string>;
   pendingSessionsDir: string | null;
   pendingJobConfigPath: string | null;
 }
@@ -45,14 +47,18 @@ const DEFAULT_OPTIONS: Required<PlanJobWatcherOptions> = {
   debounceMs: 500, // Longer debounce for agent writes
 };
 
+const PENDING_RETRY_INTERVAL_MS = 5000; // Retry every 5 seconds
+
 export class PlanJobWatcher extends EventEmitter {
   private watchedWorkspaces = new Map<string, WatchedWorkspace>();
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private options: Required<PlanJobWatcherOptions>;
+  private retryInterval: NodeJS.Timeout | null = null;
 
   constructor(options: PlanJobWatcherOptions = {}) {
     super();
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.startRetryInterval();
   }
 
   /**
@@ -73,11 +79,16 @@ export class PlanJobWatcher extends EventEmitter {
       lastPlanUpdate: 0,
       lastJobUpdate: 0,
       lastSessionUpdate: 0,
+      pendingPlanDirs: new Set(),
+      pendingJobDirs: new Set(),
       pendingSessionsDir: null,
       pendingJobConfigPath: null,
     };
 
     this.watchedWorkspaces.set(workspaceId, watched);
+
+    // Ensure retry interval is running
+    this.startRetryInterval();
 
     // Watch plan directories
     this.watchPlanDirectories(watched);
@@ -135,6 +146,16 @@ export class PlanJobWatcher extends EventEmitter {
     }
 
     this.watchedWorkspaces.delete(workspaceId);
+    
+    // Stop retry interval if no more workspaces
+    if (this.watchedWorkspaces.size === 0) {
+      this.stopRetryInterval();
+    }
+    
+    // Clear pending sets to release references
+    watched.pendingPlanDirs.clear();
+    watched.pendingJobDirs.clear();
+    
     console.log(`[PlanJobWatcher] Stopped watching workspace ${workspaceId}`);
   }
 
@@ -162,6 +183,38 @@ export class PlanJobWatcher extends EventEmitter {
    * Called periodically or when we know something might have been created.
    */
   retryPendingWatches(watched: WatchedWorkspace): void {
+    // Retry plan directories (convert to array to safely modify set while iterating)
+    const pendingPlans = Array.from(watched.pendingPlanDirs);
+    for (const dir of pendingPlans) {
+      if (existsSync(dir)) {
+        console.log(`[PlanJobWatcher] Retrying plan watch for created directory: ${dir}`);
+        watched.pendingPlanDirs.delete(dir);
+        try {
+          const watcher = this.createPlanWatcher(watched.workspaceId, dir);
+          watched.planWatchers.set(dir, watcher);
+          console.log(`[PlanJobWatcher] Watching plans: ${dir}`);
+        } catch (error) {
+          console.error(`[PlanJobWatcher] Failed to watch plans dir ${dir}:`, error);
+        }
+      }
+    }
+
+    // Retry job directories (convert to array to safely modify set while iterating)
+    const pendingJobs = Array.from(watched.pendingJobDirs);
+    for (const dir of pendingJobs) {
+      if (existsSync(dir)) {
+        console.log(`[PlanJobWatcher] Retrying job watch for created directory: ${dir}`);
+        watched.pendingJobDirs.delete(dir);
+        try {
+          const watcher = this.createJobWatcher(watched.workspaceId, dir);
+          watched.jobWatchers.set(dir, watcher);
+          console.log(`[PlanJobWatcher] Watching jobs: ${dir}`);
+        } catch (error) {
+          console.error(`[PlanJobWatcher] Failed to watch jobs dir ${dir}:`, error);
+        }
+      }
+    }
+
     // Retry sessions directory
     if (watched.pendingSessionsDir && !watched.sessionWatcher) {
       if (existsSync(watched.pendingSessionsDir)) {
@@ -180,9 +233,33 @@ export class PlanJobWatcher extends EventEmitter {
   }
 
   /**
+   * Start periodic retry for pending watches.
+   */
+  private startRetryInterval(): void {
+    if (this.retryInterval) return;
+    
+    this.retryInterval = setInterval(() => {
+      for (const watched of this.watchedWorkspaces.values()) {
+        this.retryPendingWatches(watched);
+      }
+    }, PENDING_RETRY_INTERVAL_MS);
+  }
+
+  /**
+   * Stop periodic retry.
+   */
+  private stopRetryInterval(): void {
+    if (this.retryInterval) {
+      clearInterval(this.retryInterval);
+      this.retryInterval = null;
+    }
+  }
+
+  /**
    * Stop all watchers.
    */
   unwatchAll(): void {
+    this.stopRetryInterval();
     for (const workspaceId of this.watchedWorkspaces.keys()) {
       this.unwatchWorkspace(workspaceId);
     }
@@ -195,9 +272,14 @@ export class PlanJobWatcher extends EventEmitter {
 
       for (const dir of dirs) {
         if (!existsSync(dir)) {
-          // Directory doesn't exist yet - we'll watch it when it's created
+          // Directory doesn't exist yet - track for retry
+          watched.pendingPlanDirs.add(dir);
+          console.log(`[PlanJobWatcher] Plan directory doesn't exist yet, will retry: ${dir}`);
           continue;
         }
+
+        // Remove from pending if it was there
+        watched.pendingPlanDirs.delete(dir);
 
         try {
           const watcher = this.createPlanWatcher(watched.workspaceId, dir);
@@ -205,6 +287,8 @@ export class PlanJobWatcher extends EventEmitter {
           console.log(`[PlanJobWatcher] Watching plans: ${dir}`);
         } catch (error) {
           console.error(`[PlanJobWatcher] Failed to watch plans dir ${dir}:`, error);
+          // Track as pending to retry later
+          watched.pendingPlanDirs.add(dir);
         }
       }
     });
@@ -217,8 +301,14 @@ export class PlanJobWatcher extends EventEmitter {
 
       for (const dir of dirs) {
         if (!existsSync(dir)) {
+          // Directory doesn't exist yet - track for retry
+          watched.pendingJobDirs.add(dir);
+          console.log(`[PlanJobWatcher] Job directory doesn't exist yet, will retry: ${dir}`);
           continue;
         }
+
+        // Remove from pending if it was there
+        watched.pendingJobDirs.delete(dir);
 
         try {
           const watcher = this.createJobWatcher(watched.workspaceId, dir);
@@ -226,6 +316,8 @@ export class PlanJobWatcher extends EventEmitter {
           console.log(`[PlanJobWatcher] Watching jobs: ${dir}`);
         } catch (error) {
           console.error(`[PlanJobWatcher] Failed to watch jobs dir ${dir}:`, error);
+          // Track as pending to retry later
+          watched.pendingJobDirs.add(dir);
         }
       }
     });
@@ -249,6 +341,8 @@ export class PlanJobWatcher extends EventEmitter {
       console.log(`[PlanJobWatcher] Watching sessions: ${sessionsDir}`);
     } catch (error) {
       console.error(`[PlanJobWatcher] Failed to watch sessions dir ${sessionsDir}:`, error);
+      // Track as pending to retry later (directory might have been deleted between check and watch)
+      watched.pendingSessionsDir = sessionsDir;
     }
   }
 
@@ -270,6 +364,8 @@ export class PlanJobWatcher extends EventEmitter {
       console.log(`[PlanJobWatcher] Watching job config: ${configPath}`);
     } catch (error) {
       console.error(`[PlanJobWatcher] Failed to watch job config ${configPath}:`, error);
+      // Track as pending to retry later (file might have been deleted between check and watch)
+      watched.pendingJobConfigPath = configPath;
     }
   }
 
@@ -390,16 +486,26 @@ export class PlanJobWatcher extends EventEmitter {
         }
       }
 
-      // Start watching new directories
+      // Start watching new directories (or track as pending if they don't exist yet)
       for (const dir of newDirs) {
-        if (!watched.jobWatchers.has(dir) && existsSync(dir)) {
-          try {
-            const watcher = this.createJobWatcher(workspaceId, dir);
-            watched.jobWatchers.set(dir, watcher);
-            console.log(`[PlanJobWatcher] Started watching jobs (added to config): ${dir}`);
-          } catch (error) {
-            console.error(`[PlanJobWatcher] Failed to watch jobs dir ${dir}:`, error);
-          }
+        if (watched.jobWatchers.has(dir)) continue;
+        
+        if (!existsSync(dir)) {
+          // Directory doesn't exist yet - track for retry
+          watched.pendingJobDirs.add(dir);
+          console.log(`[PlanJobWatcher] Job directory from config doesn't exist yet, will retry: ${dir}`);
+          continue;
+        }
+        
+        // Remove from pending if it was there
+        watched.pendingJobDirs.delete(dir);
+        
+        try {
+          const watcher = this.createJobWatcher(workspaceId, dir);
+          watched.jobWatchers.set(dir, watcher);
+          console.log(`[PlanJobWatcher] Started watching jobs (added to config): ${dir}`);
+        } catch (error) {
+          console.error(`[PlanJobWatcher] Failed to watch jobs dir ${dir}:`, error);
         }
       }
 
