@@ -70,7 +70,7 @@ export function PaneTabsBar({
   };
 
   return (
-    <div className="flex h-10 items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-pi-border bg-pi-surface px-2 py-1 scrollbar-thin">
+    <div className="flex h-10 items-center gap-1 overflow-hidden border-b border-pi-border bg-pi-surface px-2 py-1">
       {tabs.map((tab) => {
         const isEditing = tab.id === editingTabId;
         const isDragTarget = dragOverTabId === tab.id && draggingTabId !== tab.id;
@@ -106,7 +106,7 @@ export function PaneTabsBar({
               setDraggingTabId(null);
               setDragOverTabId(null);
             }}
-            className={`group relative flex min-w-0 flex-shrink-0 items-center px-1 py-1 text-[12px] transition-colors ${
+            className={`group relative flex min-w-0 flex-1 max-w-[150px] items-center px-1 py-1 text-[12px] transition-colors ${
               tab.isActive
                 ? 'text-pi-text after:absolute after:left-0 after:right-0 after:-bottom-[1px] after:h-[2px] after:bg-pi-accent'
                 : 'text-pi-muted hover:text-pi-text'
