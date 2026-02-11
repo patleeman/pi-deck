@@ -1180,8 +1180,6 @@ function App() {
               activePlan={ws.activePlanByWorkspace[activeWs.id] ?? null}
               onUpdatePlanTask={ws.updatePlanTask}
               onDeactivatePlan={ws.deactivatePlan}
-              activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
-              onUpdateJobTask={ws.updateJobTask}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center text-pi-muted">

@@ -14,7 +14,6 @@ import { CustomUIDialog } from './CustomUIDialog';
 
 import { ChevronDown, Send, Square, ImagePlus } from 'lucide-react';
 import { ActivePlanBanner } from './ActivePlanBanner';
-import { ActiveJobBanner } from './ActiveJobBanner';
 
 interface SessionViewProps {
   slot: SessionSlotState | null;
@@ -53,8 +52,6 @@ interface SessionViewProps {
   activePlan: import('@pi-deck/shared').ActivePlanState | null;
   onUpdatePlanTask: (planPath: string, line: number, done: boolean) => void;
   onDeactivatePlan: () => void;
-  activeJobs: import('@pi-deck/shared').ActiveJobState[];
-  onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
 }
 
 // Built-in slash commands
@@ -143,8 +140,6 @@ export const SessionView = memo(function SessionView({
   activePlan,
   onUpdatePlanTask,
   onDeactivatePlan,
-  activeJobs,
-  onUpdateJobTask,
 }: SessionViewProps) {
   const [inputValue, setInputValue] = useState('');
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -1254,14 +1249,6 @@ export const SessionView = memo(function SessionView({
           onDeactivate={onDeactivatePlan}
         />
       )}
-
-      {activeJobs.map(job => (
-        <ActiveJobBanner
-          key={job.jobPath}
-          activeJob={job}
-          onToggleTask={onUpdateJobTask}
-        />
-      ))}
 
       <div
         ref={messagesContainerRef}
