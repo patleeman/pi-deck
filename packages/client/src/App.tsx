@@ -145,8 +145,8 @@ function App() {
   // Mobile pane index - tracks which pane is shown on mobile (separate from focusedPaneId)
   const [mobilePaneIndex, setMobilePaneIndex] = useState(0);
   
-  // Mobile active panel - 'conversations' | 'chat' | 'accessories'
-  const [mobileActivePanel, setMobileActivePanel] = useState<'conversations' | 'chat' | 'accessories'>('chat');
+  // Mobile active panel - 'conversations' | 'chat' | 'tools'
+  const [mobileActivePanel, setMobileActivePanel] = useState<'conversations' | 'chat' | 'tools'>('chat');
   
   // Job locations state
   const [jobLocations, setJobLocations] = useState<Array<{ path: string; isDefault: boolean; displayName: string }>>([]);
@@ -1873,7 +1873,7 @@ function App() {
           {/* Accessories panel - slides from right */}
           <div
             className={`fixed inset-y-0 right-0 z-40 w-full bg-pi-surface transform transition-transform duration-300 ${
-              mobileActivePanel === 'accessories' ? 'translate-x-0' : 'translate-x-full'
+              mobileActivePanel === 'tools' ? 'translate-x-0' : 'translate-x-full'
             }`}
           >
             <WorkspaceFilesPane

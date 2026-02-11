@@ -1,6 +1,6 @@
-import { MessageSquare, FolderTree, Briefcase } from 'lucide-react';
+import { MessageSquare, PanelRight, Briefcase } from 'lucide-react';
 
-type MobilePanel = 'conversations' | 'chat' | 'accessories';
+type MobilePanel = 'conversations' | 'chat' | 'tools';
 
 interface MobileBottomToolbarProps {
   activePanel: MobilePanel;
@@ -36,14 +36,14 @@ export function MobileBottomToolbar({
       </button>
       
       <button
-        onClick={() => onSelectPanel('accessories')}
+        onClick={() => onSelectPanel('tools')}
         className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
-          activePanel === 'accessories' ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
+          activePanel === 'tools' ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
         }`}
-        title="Accessories"
+        title="Tools"
       >
-        <FolderTree className="w-6 h-6" />
-        <span className="text-[10px] mt-0.5">Files</span>
+        <PanelRight className="w-6 h-6" />
+        <span className="text-[10px] mt-0.5">Tools</span>
       </button>
     </div>
   );
