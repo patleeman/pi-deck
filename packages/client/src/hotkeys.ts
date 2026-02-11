@@ -15,7 +15,7 @@
 export interface HotkeyDef {
   id: string;
   label: string;
-  category: 'Navigation' | 'Panes' | 'Models & Thinking' | 'Display' | 'Input' | 'Session';
+  category: 'Navigation' | 'Session' | 'Models & Thinking' | 'Display' | 'Input';
   /** Default key binding string */
   defaultKey: string;
 }
@@ -28,11 +28,8 @@ export const HOTKEY_DEFS: HotkeyDef[] = [
   { id: 'toggleFilePane',  label: 'Toggle file pane',            category: 'Navigation',         defaultKey: 'Shift+Ctrl+F' },
   { id: 'toggleJobs',      label: 'Toggle jobs pane',            category: 'Navigation',         defaultKey: 'Shift+Ctrl+J' },
 
-  // Panes
-  { id: 'splitVertical',   label: 'Split vertical',              category: 'Panes',              defaultKey: 'Ctrl+\\' },
-  { id: 'splitHorizontal', label: 'Split horizontal',            category: 'Panes',              defaultKey: 'Shift+Ctrl+\\' },
-  { id: 'closePane',       label: 'Close pane',                  category: 'Panes',              defaultKey: 'Ctrl+W' },
-  { id: 'stopAgent',       label: 'Stop agent',                  category: 'Panes',              defaultKey: 'Ctrl+.' },
+  // Session
+  { id: 'stopAgent',       label: 'Stop agent',                  category: 'Session',            defaultKey: 'Ctrl+.' },
 
   // Models & Thinking
   { id: 'modelSelector',   label: 'Open model selector',         category: 'Models & Thinking',  defaultKey: 'Ctrl+L' },

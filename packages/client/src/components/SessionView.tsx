@@ -1,37 +1,32 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, memo } from 'react';
 import type { SessionInfo, ImageAttachment, SlashCommand as BackendSlashCommand, ModelInfo, ThinkingLevel, ScopedModelInfo, ExtensionUIResponse, CustomUIInputEvent, SessionTreeNode } from '@pi-deck/shared';
-import type { PaneData } from '../hooks/usePanes';
+import type { SessionSlotState } from '../hooks/useWorkspaces';
 import { useSettings } from '../contexts/SettingsContext';
 import { matchesHotkey } from '../hotkeys';
 import { Star } from 'lucide-react';
 import { MessageList } from './MessageList';
-import { SlashMenu, SlashCommand } from './SlashMenu';
+import { SlashCommand } from './SlashMenu';
 import { ForkDialog } from './ForkDialog';
 import { TreeMenu, flattenTree } from './TreeDialog';
 import { QuestionnaireUI } from './QuestionnaireUI';
 import { ExtensionUIDialog } from './ExtensionUIDialog';
 import { CustomUIDialog } from './CustomUIDialog';
 
-
-import { X, ChevronDown, Send, Square, ImagePlus, Command } from 'lucide-react';
+import { ChevronDown, Send, Square, ImagePlus } from 'lucide-react';
 import { ActivePlanBanner } from './ActivePlanBanner';
 import { ActiveJobBanner } from './ActiveJobBanner';
 
-interface PaneProps {
-  pane: PaneData;
-  isFocused: boolean;
+interface SessionViewProps {
+  slot: SessionSlotState | null;
+  slotId: string;
   sessions: SessionInfo[];
   models: ModelInfo[];
   backendCommands: BackendSlashCommand[];
-  canClose: boolean;
-  onFocus: () => void;
-  onClose: () => void;
   onSendPrompt: (message: string, images?: ImageAttachment[]) => void;
   onSteer: (message: string, images?: ImageAttachment[]) => void;
   onAbort: () => void;
   onLoadSession: (sessionId: string) => void;
   onNewSession: () => void;
-  onSplit: (direction: 'vertical' | 'horizontal') => void;
   onGetForkMessages: () => void;
   onFork: (entryId: string) => void;
   onSetModel: (provider: string, modelId: string) => void;
@@ -46,30 +41,24 @@ interface PaneProps {
   onShowHotkeys: () => void;
   onFollowUp: (message: string) => void;
   onReload: () => void;
-  // New features
   onGetSessionTree: () => void;
   onNavigateTree: (targetId: string) => void;
   onCopyLastAssistant: () => void;
   onGetQueuedMessages: () => void;
-  onClearQueue: () => void;
+  
   onListFiles: (query?: string, requestId?: string) => void;
   onExecuteBash: (command: string, excludeFromContext?: boolean) => void;
   onToggleAllToolsCollapsed: () => void;
   onToggleAllThinkingCollapsed: () => void;
-  // Plans
   activePlan: import('@pi-deck/shared').ActivePlanState | null;
   onUpdatePlanTask: (planPath: string, line: number, done: boolean) => void;
   onDeactivatePlan: () => void;
-  // Jobs
   activeJobs: import('@pi-deck/shared').ActiveJobState[];
   onUpdateJobTask: (jobPath: string, line: number, done: boolean) => void;
 }
 
-// Built-in pane commands (UI-only)
-const PANE_COMMANDS: SlashCommand[] = [
-  { cmd: '/split', desc: 'Split pane vertically', action: 'vsplit' },
-  { cmd: '/hsplit', desc: 'Split pane horizontally', action: 'hsplit' },
-  { cmd: '/close', desc: 'Close this pane', action: 'close' },
+// Built-in slash commands
+const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/stop', desc: 'Stop the agent', action: 'stop' },
   { cmd: '/compact', desc: 'Compact conversation history', action: 'compact' },
   { cmd: '/model', desc: 'Select a model', action: 'model' },
@@ -78,11 +67,9 @@ const PANE_COMMANDS: SlashCommand[] = [
   { cmd: '/name', desc: 'Rename session', action: 'name' },
   { cmd: '/hotkeys', desc: 'Show keyboard shortcuts', action: 'hotkeys' },
   { cmd: '/reload', desc: 'Rebuild and restart the application', action: 'reload' },
-  // New commands
   { cmd: '/tree', desc: 'Navigate session tree', action: 'tree' },
   { cmd: '/copy', desc: 'Copy last assistant response', action: 'copy' },
   { cmd: '/scoped-models', desc: 'Configure models for Ctrl+P cycling', action: 'scoped-models' },
-  // Jobs
   { cmd: '/jobs', desc: 'Open the jobs panel', action: 'jobs' },
   { cmd: '/jobs new', desc: 'Create a new job', action: 'jobs-new' },
 ];
@@ -119,21 +106,17 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment | null
   });
 }
 
-export const Pane = memo(function Pane({
-  pane,
-  isFocused,
+export const SessionView = memo(function SessionView({
+  slot,
+  slotId,
   sessions,
   models,
   backendCommands,
-  canClose,
-  onFocus,
-  onClose,
   onSendPrompt,
   onSteer,
   onAbort,
   onLoadSession,
   onNewSession,
-  onSplit,
   onGetForkMessages,
   onFork,
   onSetModel,
@@ -148,12 +131,11 @@ export const Pane = memo(function Pane({
   onShowHotkeys,
   onFollowUp,
   onReload,
-  // New features
   onGetSessionTree,
   onNavigateTree,
   onCopyLastAssistant,
   onGetQueuedMessages,
-  onClearQueue,
+  
   onListFiles,
   onExecuteBash,
   onToggleAllToolsCollapsed,
@@ -163,7 +145,7 @@ export const Pane = memo(function Pane({
   onDeactivatePlan,
   activeJobs,
   onUpdateJobTask,
-}: PaneProps) {
+}: SessionViewProps) {
   const [inputValue, setInputValue] = useState('');
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState('');
@@ -173,37 +155,27 @@ export const Pane = memo(function Pane({
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
   // Draft input persistence (per slot - localStorage based)
-  const draftKey = `pi-draft-${pane.sessionSlotId}`;
+  const draftKey = `pi-draft-${slotId}`;
   const [draftLoaded, setDraftLoaded] = useState(false);
   const prevDraftKeyRef = useRef<string | null>(null);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelFilter, setModelFilter] = useState('');
   const [modelHighlight, setModelHighlight] = useState(0);
   const modelFilterRef = useRef<HTMLInputElement>(null);
-  const modelListRef = useRef<HTMLDivElement>(null);
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
-  // 'steer' = immediate interrupt, 'followUp' = queue after current response
   const [streamingInputMode, setStreamingInputMode] = useState<'steer' | 'followUp'>('steer');
-  // New feature state
   const [showFileMenu, setShowFileMenu] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_fileFilter, setFileFilter] = useState(''); // Used to track filter for potential future client-side filtering
+  const [_fileFilter, setFileFilter] = useState('');
   const [fileList, setFileList] = useState<Array<{ path: string; name: string }>>([]);
-  // Local pending follow-ups (not yet sent to server) - user can edit/delete these
   const [pendingFollowUps, setPendingFollowUps] = useState<string[]>([]);
-  const [editingPendingIndex, setEditingPendingIndex] = useState<number | null>(null);
-  const [editingPendingText, setEditingPendingText] = useState('');
   const [scopedModels, setScopedModels] = useState<ScopedModelInfo[]>([]);
-  // Fork menu state
   const [showForkMenu, setShowForkMenu] = useState(false);
   const [forkMessages, setForkMessages] = useState<Array<{ entryId: string; text: string }>>([]);
   const [forkSelectedIdx, setForkSelectedIdx] = useState(0);
-  // Tree menu state
   const [showTreeMenu, setShowTreeMenu] = useState(false);
   const [treeData, setTreeData] = useState<SessionTreeNode[]>([]);
   const [treeCurrentLeafId, setTreeCurrentLeafId] = useState<string | null>(null);
   const [treeSelectedIdx, setTreeSelectedIdx] = useState(0);
-  // Track if Alt key is held to show follow-up mode
   const [altHeld, setAltHeld] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -213,18 +185,15 @@ export const Pane = memo(function Pane({
   const fileListRequestIdRef = useRef<string | null>(null);
   const userScrolledUpRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
-  // Double-escape tracking
   const lastEscapeTimeRef = useRef(0);
   const { settings, openSettings } = useSettings();
   const hk = settings.hotkeyOverrides;
 
   // Get slot data
-  const slot = pane.slot;
   const messages = slot?.messages || [];
   const isStreaming = slot?.isStreaming || false;
   const streamingText = slot?.streamingText || '';
   const streamingThinking = slot?.streamingThinking || '';
-  // Defer streaming content so React prioritizes user input over streaming renders
   const deferredStreamingText = useDeferredValue(streamingText);
   const deferredStreamingThinking = useDeferredValue(streamingThinking);
   const state = slot?.state;
@@ -238,18 +207,14 @@ export const Pane = memo(function Pane({
   const queuedSteering = slot?.queuedMessages?.steering || [];
   const queuedFollowUp = slot?.queuedMessages?.followUp || [];
   
-  // Optimistic state for clearing queue - hides shelf immediately on clear
   const [optimisticQueueClear, setOptimisticQueueClear] = useState(false);
-  const hasQueuedMessages = (queuedSteering.length > 0 || queuedFollowUp.length > 0) && !optimisticQueueClear;
+  
 
-  // Track session ID to reset scroll when workspace/session changes
   const sessionId = state?.sessionId;
   const prevSessionIdRef = useRef<string | null | undefined>(undefined);
 
-  // Reset scroll position when session changes (workspace tab switch or session switch)
   useEffect(() => {
     if (prevSessionIdRef.current !== undefined && prevSessionIdRef.current !== sessionId) {
-      // Session changed - reset scroll to top
       const container = messagesContainerRef.current;
       if (container) {
         container.scrollTop = 0;
@@ -259,26 +224,18 @@ export const Pane = memo(function Pane({
     prevSessionIdRef.current = sessionId;
   }, [sessionId]);
   
-  // Reset optimistic queue clear when server sends new queue data
-  // Note: we only depend on queue lengths, NOT optimisticQueueClear
-  // If we depended on optimisticQueueClear, this would run immediately after
-  // we set it and reset it before the server responds
   useEffect(() => {
     if (optimisticQueueClear && (queuedSteering.length > 0 || queuedFollowUp.length > 0)) {
-      // Server has new queue data, reset optimistic state
       setOptimisticQueueClear(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queuedSteering.length, queuedFollowUp.length]);
 
-  // Load saved draft input on mount or when slot changes
   useEffect(() => {
-    // Reload draft when switching to a different slot
     if (prevDraftKeyRef.current !== null && prevDraftKeyRef.current !== draftKey) {
-      setDraftLoaded(false); // Reset to trigger reload
+      setDraftLoaded(false);
     }
     
-    if (draftLoaded) return; // Only load once per key
+    if (draftLoaded) return;
     
     try {
       const saved = localStorage.getItem(draftKey);
@@ -289,7 +246,6 @@ export const Pane = memo(function Pane({
         }
         if (draft.images && draft.images.length > 0 && attachedImages.length === 0) {
           setAttachedImages(draft.images);
-          // Generate preview URLs for base64 images
           const previews = draft.images.map((img: ImageAttachment) => {
             if (img.source.type === 'base64') {
               return `data:${img.source.mediaType};base64,${img.source.data}`;
@@ -300,34 +256,25 @@ export const Pane = memo(function Pane({
         }
       }
     } catch (e) {
-      // Ignore errors reading draft
-      console.warn('[Pane] Failed to load draft:', e);
+      console.warn('[SessionView] Failed to load draft:', e);
     }
     prevDraftKeyRef.current = draftKey;
     setDraftLoaded(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, draftLoaded]);
 
-  // Get current model and thinking level
   const currentModel = state?.model;
   const currentThinking = state?.thinkingLevel || 'off';
-
   const contextPercent = state?.contextWindowPercent ?? 0;
-
-  // Get session status
   const sessionStatus = isStreaming ? 'running' : (state?.sessionId ? 'idle' : 'idle');
 
-  // Get session title from first user message or session ID
   const sessionTitle = state?.sessionName
     || messages.find(m => m.role === 'user')?.content
       .find(c => c.type === 'text')?.text?.slice(0, 50)
     || 'New conversation';
 
-  // Merge pane commands with backend commands
   const allCommands = useMemo(() => {
-    const cmds: SlashCommand[] = [...PANE_COMMANDS];
+    const cmds: SlashCommand[] = [...SLASH_COMMANDS];
     
-    // Add backend commands
     for (const bc of backendCommands) {
       cmds.push({
         cmd: `/${bc.name}`,
@@ -336,7 +283,6 @@ export const Pane = memo(function Pane({
       });
     }
     
-    // Add resume command for sessions
     if (sessions.length > 0) {
       cmds.push({
         cmd: '/resume',
@@ -345,32 +291,20 @@ export const Pane = memo(function Pane({
       });
     }
     
-    // Add new session command
-    cmds.push({
-      cmd: '/new',
-      desc: 'Start a new session',
-      action: 'new',
-    });
-    
-    // Add fork command
-    cmds.push({
-      cmd: '/fork',
-      desc: 'Fork from a previous message',
-      action: 'fork',
-    });
+    cmds.push(
+      { cmd: '/new', desc: 'Start a new session', action: 'new' },
+      { cmd: '/fork', desc: 'Fork from a previous message', action: 'fork' }
+    );
     
     return cmds;
   }, [backendCommands, sessions.length]);
 
-  // Filter commands based on input - simple prefix/substring match on command name only
   const filteredCommands = useMemo(() => {
     if (!slashFilter || slashFilter === '/') return allCommands;
     
-    // Remove leading slash for matching
     const query = slashFilter.startsWith('/') ? slashFilter.slice(1).toLowerCase() : slashFilter.toLowerCase();
     if (!query) return allCommands;
     
-    // Filter and sort: exact prefix matches first, then substring matches
     const prefixMatches: SlashCommand[] = [];
     const substringMatches: SlashCommand[] = [];
     
@@ -387,7 +321,6 @@ export const Pane = memo(function Pane({
     return [...prefixMatches, ...substringMatches];
   }, [allCommands, slashFilter]);
 
-  // Session list for /resume
   const [showResumeMenu, setShowResumeMenu] = useState(false);
   const [resumeFilter, setResumeFilter] = useState('');
   const filteredSessions = useMemo(() => {
@@ -400,61 +333,48 @@ export const Pane = memo(function Pane({
     );
   }, [sessions, resumeFilter]);
 
-  // Track when user scrolls away from bottom
   const handleMessagesScroll = useCallback(() => {
-    // Ignore scroll events triggered by programmatic scrolling
     if (isProgrammaticScrollRef.current) return;
     
     const container = messagesContainerRef.current;
     if (!container) return;
     
-    // Check if scrolled to bottom (with 150px tolerance for reliability)
     const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
     userScrolledUpRef.current = !isAtBottom;
   }, []);
 
-  // Scroll to bottom helper - uses scrollIntoView on end marker for reliability
   const scrollToBottom = useCallback((smooth = true) => {
     isProgrammaticScrollRef.current = true;
     requestAnimationFrame(() => {
       const container = messagesContainerRef.current;
       if (container) {
-        // Use scrollTop for reliability - scrollIntoView can be imprecise
         container.scrollTop = container.scrollHeight;
       }
-      // Reset flag after a short delay to allow scroll to complete
       setTimeout(() => {
         isProgrammaticScrollRef.current = false;
       }, smooth ? 300 : 100);
     });
   }, []);
 
-  // Scroll to bottom when new messages arrive
   useEffect(() => {
     if (!userScrolledUpRef.current) {
       scrollToBottom();
     }
   }, [messages.length, scrollToBottom]);
 
-  // Track total tool result content to detect updates (not just count)
   const toolResultsFingerprint = useMemo(() => {
     return activeToolExecutions.map(t => `${t.toolCallId}:${t.status}:${(t.result?.length || 0)}`).join('|');
   }, [activeToolExecutions]);
 
-  // Track last message content length to detect in-place updates
   const lastMessageFingerprint = useMemo(() => {
     if (messages.length === 0) return '';
     const lastMsg = messages[messages.length - 1];
-    // Track content length as a simple fingerprint for changes
     return `${lastMsg.id}:${JSON.stringify(lastMsg.content).length}`;
   }, [messages]);
 
-  // Scroll during streaming (text, thinking, or tool output changes)
   useEffect(() => {
     if (!isStreaming) return;
     
-    // During streaming, re-check if we're near the bottom and resume auto-scroll
-    // This handles the race where programmatic scroll timeout expires before content grows
     if (userScrolledUpRef.current) {
       const container = messagesContainerRef.current;
       if (container) {
@@ -470,20 +390,16 @@ export const Pane = memo(function Pane({
     }
   }, [isStreaming, deferredStreamingText, deferredStreamingThinking, toolResultsFingerprint, lastMessageFingerprint, scrollToBottom]);
 
-  // Scroll when bash execution output changes
   useEffect(() => {
     if (bashExecution && !userScrolledUpRef.current) {
       scrollToBottom(false);
     }
   }, [bashExecution?.output, bashExecution?.isRunning, scrollToBottom]);
 
-  // Reset scroll tracking when bash execution starts (new command)
   useEffect(() => {
     if (bashExecution?.isRunning) {
-      // New bash command started - reset scroll tracking to ensure auto-scroll
       const container = messagesContainerRef.current;
       if (container) {
-        // Only reset if we're already at or near the bottom
         const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
         if (distFromBottom < 300) {
           userScrolledUpRef.current = false;
@@ -493,14 +409,10 @@ export const Pane = memo(function Pane({
     }
   }, [bashExecution?.command, scrollToBottom]);
 
-  // Track previous streaming state to detect when streaming ends
   const prevIsStreamingRef = useRef(isStreaming);
   useEffect(() => {
-    // When streaming ends (was streaming, now not), send any pending follow-ups
     if (prevIsStreamingRef.current && !isStreaming && pendingFollowUps.length > 0) {
-      // Send each pending follow-up as a new prompt
       pendingFollowUps.forEach((msg, i) => {
-        // Small delay between messages to ensure ordering
         setTimeout(() => {
           onSendPrompt(msg);
         }, i * 100);
@@ -510,28 +422,24 @@ export const Pane = memo(function Pane({
     prevIsStreamingRef.current = isStreaming;
   }, [isStreaming, pendingFollowUps, onSendPrompt]);
 
-  // Focus input when pane becomes focused
   useEffect(() => {
-    if (isFocused && !hasInlineDialog) {
-      // Use setTimeout to ensure DOM is ready (especially for new panes)
+    if (!hasInlineDialog) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [isFocused, hasInlineDialog]);
+  }, [hasInlineDialog]);
 
-  // Reset textarea height when input is cleared
   useEffect(() => {
     if (inputValue === '' && inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
   }, [inputValue]);
 
-  // Save draft input when it changes (debounced to avoid blocking input)
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!draftLoaded) return; // Wait until draft is loaded before saving
+    if (!draftLoaded) return;
     
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
@@ -541,15 +449,13 @@ export const Pane = memo(function Pane({
           images: attachedImages,
           timestamp: Date.now(),
         };
-        // Only save if there's content, otherwise delete the draft
         if (inputValue.trim() || attachedImages.length > 0) {
           localStorage.setItem(draftKey, JSON.stringify(draft));
         } else {
           localStorage.removeItem(draftKey);
         }
       } catch (e) {
-        // Ignore errors saving draft
-        console.warn('[Pane] Failed to save draft:', e);
+        console.warn('[SessionView] Failed to save draft:', e);
       }
     }, 500);
     
@@ -558,7 +464,6 @@ export const Pane = memo(function Pane({
     };
   }, [draftKey, inputValue, attachedImages, draftLoaded]);
 
-  // Listen for file list events (@ reference)
   useEffect(() => {
     const handleFileList = (e: CustomEvent<{ files: Array<{ path: string; name: string }>; requestId?: string }>) => {
       if (fileListRequestIdRef.current && e.detail.requestId !== fileListRequestIdRef.current) {
@@ -570,68 +475,58 @@ export const Pane = memo(function Pane({
     return () => window.removeEventListener('pi:fileList', handleFileList as EventListener);
   }, []);
 
-
-  // Listen for fork messages event (filtered by this pane's slotId)
   useEffect(() => {
     const handleForkMessages = (e: CustomEvent<{ sessionSlotId?: string; messages: Array<{ entryId: string; text: string }> }>) => {
-      if (e.detail.sessionSlotId === pane.sessionSlotId) {
+      if (e.detail.sessionSlotId === slotId) {
         setForkMessages(e.detail.messages);
         setForkSelectedIdx(e.detail.messages.length - 1);
         setShowForkMenu(true);
-        setShowTreeMenu(false); // mutual exclusion
+        setShowTreeMenu(false);
       }
     };
     window.addEventListener('pi:forkMessages', handleForkMessages as EventListener);
     return () => window.removeEventListener('pi:forkMessages', handleForkMessages as EventListener);
-  }, [pane.sessionSlotId]);
+  }, [slotId]);
 
-  // Listen for session tree event (filtered by this pane's slotId)
   useEffect(() => {
     const handleSessionTree = (e: CustomEvent<{ sessionSlotId?: string; tree: SessionTreeNode[]; currentLeafId: string | null }>) => {
-      if (e.detail.sessionSlotId === pane.sessionSlotId) {
+      if (e.detail.sessionSlotId === slotId) {
         setTreeData(e.detail.tree);
         setTreeCurrentLeafId(e.detail.currentLeafId);
         const items = flattenTree(e.detail.tree, e.detail.currentLeafId);
-        // Select the current leaf by default
         const currentIdx = items.findIndex(i => i.isCurrent);
         setTreeSelectedIdx(currentIdx >= 0 ? currentIdx : items.length - 1);
         setShowTreeMenu(true);
-        setShowForkMenu(false); // mutual exclusion
+        setShowForkMenu(false);
       }
     };
     window.addEventListener('pi:sessionTree', handleSessionTree as EventListener);
     return () => window.removeEventListener('pi:sessionTree', handleSessionTree as EventListener);
-  }, [pane.sessionSlotId]);
+  }, [slotId]);
 
-  // Listen for copy result (filtered by this pane's slotId)
   useEffect(() => {
     const handleCopyResult = (e: CustomEvent<{ sessionSlotId: string; success: boolean; text?: string; error?: string }>) => {
-      // Only handle if this event is for this pane's slot
-      if (e.detail.sessionSlotId !== pane.sessionSlotId) return;
+      if (e.detail.sessionSlotId !== slotId) return;
       
       if (e.detail.success && e.detail.text) {
-        navigator.clipboard.writeText(e.detail.text).catch(() => {
-          // Ignore clipboard failures; caller already has explicit success/error payload.
-        });
+        navigator.clipboard.writeText(e.detail.text).catch(() => {});
       } else if (e.detail.error) {
         console.error('Copy failed:', e.detail.error);
       }
     };
     window.addEventListener('pi:copyResult', handleCopyResult as EventListener);
     return () => window.removeEventListener('pi:copyResult', handleCopyResult as EventListener);
-  }, [pane.sessionSlotId]);
+  }, [slotId]);
 
-  // Listen for scoped models response (for Ctrl+P cycling)
   useEffect(() => {
     const handleScopedModels = (e: CustomEvent<{ sessionSlotId: string; models: ScopedModelInfo[] }>) => {
-      if (e.detail.sessionSlotId !== pane.sessionSlotId) return;
+      if (e.detail.sessionSlotId !== slotId) return;
       setScopedModels(e.detail.models);
     };
     window.addEventListener('pi:scopedModels', handleScopedModels as EventListener);
     return () => window.removeEventListener('pi:scopedModels', handleScopedModels as EventListener);
-  }, [pane.sessionSlotId]);
+  }, [slotId]);
 
-  // Track Alt key to toggle between steer and follow-up modes
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Alt' && isStreaming) {
@@ -653,7 +548,6 @@ export const Pane = memo(function Pane({
     };
   }, [isStreaming]);
 
-  // Handle image drop
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -696,7 +590,6 @@ export const Pane = memo(function Pane({
     e.stopPropagation();
   }, []);
 
-  // Handle image paste
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData.items);
     const imageItems = items.filter(item => item.type.startsWith('image/'));
@@ -726,7 +619,6 @@ export const Pane = memo(function Pane({
     });
   }, []);
 
-  // Handle file input change (for mobile attach button)
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     const imageFiles = files.filter(f => f.type.startsWith('image/'));
@@ -739,11 +631,9 @@ export const Pane = memo(function Pane({
         setImagePreviews(prev => [...prev, previewUrl]);
       }
     }
-    // Reset input so same file can be selected again
     e.target.value = '';
   }, []);
 
-  // Handle send button click
   const handleSend = useCallback(() => {
     if (!inputValue.trim() && attachedImages.length === 0) return;
 
@@ -766,24 +656,19 @@ export const Pane = memo(function Pane({
       return;
     }
     
-    // Reset scroll tracking - user sent a message, so resume auto-scroll
     userScrolledUpRef.current = false;
     
-    // Determine the effective mode - if Alt is held, use followUp
     const effectiveMode = altHeld ? 'followUp' : streamingInputMode;
     
     if (isStreaming) {
       if (effectiveMode === 'steer') {
-        // Steer messages are sent immediately to interrupt/guide the agent
         onSteer(trimmedMessage, attachedImages.length > 0 ? attachedImages : undefined);
       } else {
-        // Queue follow-up messages locally - they'll be sent when agent finishes
         setPendingFollowUps(prev => [...prev, trimmedMessage]);
       }
     } else {
       onSendPrompt(trimmedMessage, attachedImages.length > 0 ? attachedImages : undefined);
     }
-    // Clear images after sending
     imagePreviews.forEach(url => URL.revokeObjectURL(url));
     setAttachedImages([]);
     setImagePreviews([]);
@@ -791,17 +676,17 @@ export const Pane = memo(function Pane({
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
-  }, [inputValue, attachedImages, imagePreviews, isStreaming, streamingInputMode, altHeld, onSteer, onFollowUp, onSendPrompt, onExecuteBash]);
+  }, [inputValue, attachedImages, imagePreviews, isStreaming, streamingInputMode, altHeld, onSteer, onSendPrompt, onExecuteBash]);
 
   const fileListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestFileList = useCallback((query?: string) => {
     if (fileListTimerRef.current) clearTimeout(fileListTimerRef.current);
     fileListTimerRef.current = setTimeout(() => {
-      const requestId = `pane-${pane.sessionSlotId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const requestId = `session-${slotId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       fileListRequestIdRef.current = requestId;
       onListFiles(query, requestId);
     }, 150);
-  }, [onListFiles, pane.sessionSlotId]);
+  }, [onListFiles, slotId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -814,7 +699,6 @@ export const Pane = memo(function Pane({
       setShowResumeMenu(false);
       setShowFileMenu(false);
     } else if (val.includes('@')) {
-      // Check if we should show file menu (@ at start or after whitespace)
       const lastAtIndex = val.lastIndexOf('@');
       const charBefore = lastAtIndex > 0 ? val[lastAtIndex - 1] : ' ';
       if (charBefore === ' ' || charBefore === '\n' || lastAtIndex === 0) {
@@ -823,7 +707,6 @@ export const Pane = memo(function Pane({
         setShowFileMenu(true);
         setFileFilter(val.slice(lastAtIndex + 1));
         setSelectedCmdIdx(0);
-        // Request file list from server
         requestFileList(val.slice(lastAtIndex + 1));
       }
     } else {
@@ -835,15 +718,6 @@ export const Pane = memo(function Pane({
 
   const executeCommand = (action: string) => {
     switch (action) {
-      case 'vsplit':
-        onSplit('vertical');
-        break;
-      case 'hsplit':
-        onSplit('horizontal');
-        break;
-      case 'close':
-        if (canClose) onClose();
-        break;
       case 'new':
         onNewSession();
         break;
@@ -872,7 +746,6 @@ export const Pane = memo(function Pane({
         onExport();
         break;
       case 'name':
-        // Prompt for name - for now just use a simple prompt
         const newName = window.prompt('Enter session name:');
         if (newName) {
           onRenameSession(newName);
@@ -888,10 +761,9 @@ export const Pane = memo(function Pane({
         setShowSlashMenu(false);
         setShowResumeMenu(true);
         setResumeFilter('');
-        setSelectedCmdIdx(0); // Reset selection
+        setSelectedCmdIdx(0);
         setInputValue('');
-        return; // Don't clear input yet
-      // New commands
+        return;
       case 'tree':
         onGetSessionTree();
         break;
@@ -908,10 +780,8 @@ export const Pane = memo(function Pane({
         window.dispatchEvent(new CustomEvent('pi:openJobs', { detail: { mode: 'create' } }));
         break;
       default:
-        // Backend command
         if (action.startsWith('backend:')) {
           const cmdName = action.slice(8);
-          // Send as a prompt with the command
           onSendPrompt(`/${cmdName}`);
         }
         break;
@@ -925,7 +795,6 @@ export const Pane = memo(function Pane({
     onLoadSession(sessionId);
     setShowResumeMenu(false);
     setInputValue('');
-    // Focus the input after session loads
     setTimeout(() => {
       inputRef.current?.focus();
     }, 0);
@@ -934,7 +803,6 @@ export const Pane = memo(function Pane({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const key = e.key;
     
-    // Resume menu navigation
     if (showResumeMenu && filteredSessions.length > 0) {
       if (key === 'ArrowDown' || key === 'Tab') {
         e.preventDefault();
@@ -963,7 +831,6 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Fork menu navigation
     if (showForkMenu && forkMessages.length > 0) {
       if (key === 'ArrowDown') {
         e.preventDefault();
@@ -994,7 +861,6 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Tree menu navigation
     if (showTreeMenu) {
       const treeItems = flattenTree(treeData, treeCurrentLeafId);
       if (key === 'ArrowDown') {
@@ -1026,7 +892,6 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Slash menu navigation
     if (showSlashMenu && filteredCommands.length > 0) {
       if (key === 'ArrowDown' || key === 'Tab') {
         e.preventDefault();
@@ -1055,35 +920,25 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Escape - context-dependent behavior matching pi TUI:
-    // 1. If streaming: abort the agent and restore queued messages
-    // 2. If bash is running: abort (same as streaming abort)
-    // 3. If input has text: clear input
-    // 4. If input is empty: double-escape triggers /tree or /fork (configurable)
     if (key === 'Escape') {
       e.preventDefault();
 
-      // Priority 1: Abort streaming agent
       if (isStreaming) {
         onAbort();
-        // Restore queued messages to input
         onGetQueuedMessages();
         return;
       }
 
-      // Priority 2: Abort running bash
       if (bashExecution?.isRunning) {
         onAbort();
         return;
       }
 
-      // Priority 3: Clear input if it has text
       if (inputValue.trim()) {
         setInputValue('');
         return;
       }
 
-      // Priority 4: Double-escape with empty input → /tree or /fork
       if (settings.doubleEscapeAction !== 'none') {
         const now = Date.now();
         if (now - lastEscapeTimeRef.current < 500) {
@@ -1098,12 +953,10 @@ export const Pane = memo(function Pane({
         lastEscapeTimeRef.current = now;
       }
 
-      // Fallback: clear input (already empty, but reset any other state)
       setInputValue('');
       return;
     }
 
-    // Ctrl+C to clear input (when there's no selection to copy)
     if (key === 'c' && e.ctrlKey && !e.metaKey && !e.shiftKey) {
       const input = e.target as HTMLTextAreaElement;
       const hasSelection = input.selectionStart !== input.selectionEnd;
@@ -1114,7 +967,6 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Ctrl+U - Delete to line start
     if (key === 'u' && e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
       const input = e.target as HTMLTextAreaElement;
@@ -1124,7 +976,6 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // Ctrl+K - Delete to line end
     if (key === 'k' && e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
       const input = e.target as HTMLTextAreaElement;
@@ -1133,7 +984,6 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // Model selector
     if (matchesHotkey(e, 'modelSelector', hk)) {
       e.preventDefault();
       setShowModelMenu(true);
@@ -1144,7 +994,6 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // Cycle thinking level
     if (matchesHotkey(e, 'cycleThinking', hk) && !showSlashMenu && !showResumeMenu) {
       e.preventDefault();
       const currentIdx = THINKING_LEVELS.indexOf(currentThinking);
@@ -1153,22 +1002,17 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // Tab - Path completion (when not in a menu and typing a path)
     if (key === 'Tab' && !e.shiftKey && !showSlashMenu && !showResumeMenu && !showFileMenu && !showModelMenu && !showThinkingMenu) {
-      // Check if we're in a path context (after @ or typing a path-like string)
       const input = e.target as HTMLTextAreaElement;
       const cursorPos = input.selectionStart || 0;
       const textBeforeCursor = inputValue.slice(0, cursorPos);
       
-      // Find the start of the current word/path
       const lastSpaceOrNewline = Math.max(textBeforeCursor.lastIndexOf(' '), textBeforeCursor.lastIndexOf('\n'));
       const wordStart = lastSpaceOrNewline + 1;
       const currentWord = textBeforeCursor.slice(wordStart);
       
-      // Check if it looks like a path (starts with @, ., /, or ~) or contains /
       if (currentWord && (currentWord.startsWith('@') || currentWord.startsWith('.') || currentWord.startsWith('/') || currentWord.startsWith('~') || currentWord.includes('/'))) {
         e.preventDefault();
-        // Request file completion
         const query = currentWord.startsWith('@') ? currentWord.slice(1) : currentWord;
         requestFileList(query);
         setShowFileMenu(true);
@@ -1178,7 +1022,6 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Next model
     if (matchesHotkey(e, 'nextModel', hk)) {
       e.preventDefault();
       const enabledScoped = scopedModels.filter(m => m.enabled);
@@ -1198,7 +1041,6 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // Previous model
     if (matchesHotkey(e, 'prevModel', hk)) {
       e.preventDefault();
       const enabledScoped = scopedModels.filter(m => m.enabled);
@@ -1218,28 +1060,24 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // Toggle tools
     if (matchesHotkey(e, 'toggleTools', hk)) {
       e.preventDefault();
       onToggleAllToolsCollapsed();
       return;
     }
 
-    // Toggle thinking
     if (matchesHotkey(e, 'toggleThinking', hk)) {
       e.preventDefault();
       onToggleAllThinkingCollapsed();
       return;
     }
 
-    // Retrieve queued messages
     if (matchesHotkey(e, 'retrieveQueued', hk)) {
       e.preventDefault();
       onGetQueuedMessages();
       return;
     }
 
-    // Queue follow-up message
     if (matchesHotkey(e, 'queueFollowUp', hk) && inputValue.trim()) {
       e.preventDefault();
       onFollowUp(inputValue.trim());
@@ -1247,7 +1085,6 @@ export const Pane = memo(function Pane({
       return;
     }
 
-    // File menu navigation
     if (showFileMenu && fileList.length > 0) {
       if (key === 'ArrowDown' || key === 'Tab') {
         e.preventDefault();
@@ -1264,7 +1101,6 @@ export const Pane = memo(function Pane({
       if (key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        // Replace the @query with the file path
         const lastAtIndex = inputValue.lastIndexOf('@');
         const newValue = inputValue.slice(0, lastAtIndex) + '@' + fileList[selectedCmdIdx].path + ' ';
         setInputValue(newValue);
@@ -1280,36 +1116,31 @@ export const Pane = memo(function Pane({
       }
     }
 
-    // Send message - check for !command and !!command
     if (key === 'Enter' && !e.shiftKey && !e.altKey && (inputValue.trim() || attachedImages.length > 0)) {
       e.preventDefault();
       const trimmed = inputValue.trim();
       
-      // Check for !!command (bash without sending to LLM)
       if (trimmed.startsWith('!!')) {
         const command = trimmed.slice(2).trim();
         if (command) {
-          onExecuteBash(command, true); // excludeFromContext = true
+          onExecuteBash(command, true);
         }
         setInputValue('');
         return;
       }
       
-      // Check for !command (bash and send to LLM)
       if (trimmed.startsWith('!') && !trimmed.startsWith('!!')) {
         const command = trimmed.slice(1).trim();
         if (command) {
-          onExecuteBash(command, false); // excludeFromContext = false
+          onExecuteBash(command, false);
         }
         setInputValue('');
         return;
       }
       
-      // Reset scroll tracking - user sent a message, so resume auto-scroll
       userScrolledUpRef.current = false;
       
       if (isStreaming) {
-        // Use current streaming mode
         if (streamingInputMode === 'steer') {
           onSteer(trimmed, attachedImages.length > 0 ? attachedImages : undefined);
         } else {
@@ -1318,7 +1149,6 @@ export const Pane = memo(function Pane({
       } else {
         onSendPrompt(trimmed, attachedImages.length > 0 ? attachedImages : undefined);
       }
-      // Clear images after sending
       imagePreviews.forEach(url => URL.revokeObjectURL(url));
       setAttachedImages([]);
       setImagePreviews([]);
@@ -1327,22 +1157,15 @@ export const Pane = memo(function Pane({
   };
 
   const hasSession = state?.sessionId != null;
+  const modelDisplay = currentModel ? `${currentModel.name || currentModel.id}` : 'No model';
 
-  // Format model display
-  const modelDisplay = currentModel 
-    ? `${currentModel.name || currentModel.id}` 
-    : 'No model';
-
-  // Handle click on pane - focus pane and input
   const handlePaneClick = useCallback(() => {
-    onFocus();
-    // Don't steal focus from a text selection — focusing the textarea clears it
     const selection = window.getSelection();
     const hasTextSelection = selection && selection.toString().length > 0;
     if (!hasInlineDialog && !hasTextSelection) {
       inputRef.current?.focus();
     }
-  }, [onFocus, hasInlineDialog]);
+  }, [hasInlineDialog]);
 
   return (
     <div
@@ -1353,7 +1176,6 @@ export const Pane = memo(function Pane({
       onDrop={handleDrop}
       className="flex-1 flex flex-col bg-pi-surface overflow-hidden min-w-0 min-h-0 relative"
     >
-      {/* Drag overlay */}
       {isDragging && (
         <div className="absolute inset-0 z-50 bg-pi-bg/90 backdrop-blur-sm flex items-center justify-center pointer-events-none">
           <div className="border border-dashed border-pi-accent p-4 text-pi-accent text-[14px]">
@@ -1362,7 +1184,6 @@ export const Pane = memo(function Pane({
         </div>
       )}
 
-      {/* Header with model/thinking selectors */}
       <div className="px-3 py-[7px] border-b border-pi-border flex items-center justify-between gap-3 sm:gap-2 text-[12px]">
         <div className="flex items-center gap-2 min-w-0">
           <span
@@ -1376,7 +1197,6 @@ export const Pane = memo(function Pane({
         </div>
         
         <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Model selector */}
           <div className="relative">
             <button
               onClick={() => { const next = !showModelMenu; setShowModelMenu(next); if (next) { setModelFilter(''); setModelHighlight(0); setTimeout(() => modelFilterRef.current?.focus(), 0); } setShowThinkingMenu(false); }}
@@ -1387,191 +1207,69 @@ export const Pane = memo(function Pane({
               <ChevronDown className="w-4 h-4 sm:w-3 sm:h-3" />
             </button>
             
-            {showModelMenu && (() => {
-              const pinnedKeys = new Set(settings.pinnedModelKeys || []);
-              const filterLower = modelFilter.toLowerCase();
-              const matchesFilter = (m: ModelInfo) =>
-                !filterLower || (m.name || m.id).toLowerCase().includes(filterLower) || m.provider.toLowerCase().includes(filterLower);
-
-              const pinnedModels = pinnedKeys.size > 0
-                ? models.filter(m => pinnedKeys.has(`${m.provider}:${m.id}`) && matchesFilter(m))
-                : [];
-              const unpinnedModels = pinnedKeys.size > 0
-                ? models.filter(m => !pinnedKeys.has(`${m.provider}:${m.id}`) && matchesFilter(m))
-                : models.filter(matchesFilter);
-              const allFiltered = [...pinnedModels, ...unpinnedModels];
-
-              // Clamp highlight to valid range
-              const clampedHighlight = allFiltered.length === 0 ? -1 : Math.min(modelHighlight, allFiltered.length - 1);
-
-              const scrollHighlightIntoView = (idx: number) => {
-                const listEl = modelListRef.current;
-                if (!listEl) return;
-                const items = listEl.querySelectorAll('[data-model-item]');
-                items[idx]?.scrollIntoView({ block: 'nearest' });
-              };
-
-              const selectModel = (m: ModelInfo) => {
-                onSetModel(m.provider, m.id);
-                setShowModelMenu(false);
-                inputRef.current?.focus();
-              };
-
-              return (
-                <>
-                  <div 
-                    className="fixed inset-0 z-40" 
-                    onClick={() => setShowModelMenu(false)} 
+            {showModelMenu && (
+              <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] max-w-[90vw] bg-pi-bg border border-pi-border rounded shadow-lg overflow-hidden">
+                <div className="p-2 border-b border-pi-border">
+                  <input
+                    ref={modelFilterRef}
+                    value={modelFilter}
+                    onChange={(e) => { setModelFilter(e.target.value); setModelHighlight(0); }}
+                    placeholder="Filter models..."
+                    className="w-full bg-transparent text-pi-text text-[12px] outline-none placeholder:text-pi-muted"
                   />
-                  <div className="absolute top-full right-0 mt-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 min-w-[300px] max-h-[300px] flex flex-col">
-                    <div className="px-2 py-1.5 border-b border-pi-border flex-shrink-0">
-                      <input
-                        ref={modelFilterRef}
-                        type="text"
-                        value={modelFilter}
-                        onChange={(e) => { setModelFilter(e.target.value); setModelHighlight(0); }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') {
-                            e.stopPropagation();
-                            setShowModelMenu(false);
-                            inputRef.current?.focus();
-                          } else if (e.key === 'ArrowDown') {
-                            e.preventDefault();
-                            const next = Math.min(clampedHighlight + 1, allFiltered.length - 1);
-                            setModelHighlight(next);
-                            scrollHighlightIntoView(next);
-                          } else if (e.key === 'ArrowUp') {
-                            e.preventDefault();
-                            const next = Math.max(clampedHighlight - 1, 0);
-                            setModelHighlight(next);
-                            scrollHighlightIntoView(next);
-                          } else if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if (clampedHighlight >= 0 && allFiltered[clampedHighlight]) {
-                              selectModel(allFiltered[clampedHighlight]);
-                            }
-                          }
-                        }}
-                        placeholder="Filter models..."
-                        className="w-full px-2 py-1 text-[13px] bg-pi-surface border border-pi-border rounded text-pi-text placeholder:text-pi-muted focus:outline-none focus:ring-1 focus:ring-pi-accent"
-                      />
-                    </div>
-                    <div ref={modelListRef} className="overflow-y-auto flex-1">
-                      {allFiltered.map((model, idx) => {
-                        const isPinned = pinnedKeys.has(`${model.provider}:${model.id}`);
-                        const isActive = currentModel?.id === model.id && currentModel?.provider === model.provider;
-                        const isHighlighted = idx === clampedHighlight;
-                        // Show separator between pinned and unpinned
-                        const showSep = isPinned && idx === pinnedModels.length - 1 && unpinnedModels.length > 0;
-
-                        return (
-                          <div key={`${model.provider}:${model.id}`}>
-                            <button
-                              data-model-item
-                              onClick={() => selectModel(model)}
-                              onMouseEnter={() => setModelHighlight(idx)}
-                              className={`w-full px-4 py-3 sm:px-3 sm:py-2 text-left text-[14px] sm:text-[13px] transition-colors flex items-center gap-2 ${
-                                isHighlighted ? 'bg-pi-surface' : ''
-                              } ${isActive ? 'text-pi-accent' : 'text-pi-text'}`}
-                            >
-                              {isPinned && <Star className="w-3 h-3 text-pi-accent flex-shrink-0" />}
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate">{model.name || model.id}</div>
-                                <div className="text-[12px] sm:text-[11px] text-pi-muted truncate">{model.provider}</div>
-                              </div>
-                            </button>
-                            {showSep && <div className="border-t border-pi-border my-0.5" />}
-                          </div>
-                        );
-                      })}
-                      {allFiltered.length === 0 && (
-                        <div className="px-4 py-3 text-[13px] text-pi-muted text-center">No models match</div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-          
-          {/* Thinking level selector */}
-          <div className="relative">
-            <button
-              onClick={() => { setShowThinkingMenu(!showThinkingMenu); setShowModelMenu(false); }}
-              className="flex items-center gap-1.5 sm:gap-1 p-2 sm:p-0 -m-2 sm:m-0 text-pi-muted hover:text-pi-text transition-colors"
-            >
-              <span className={currentThinking !== 'off' ? 'text-pi-accent' : ''}>
-                {currentThinking === 'off' ? 'Off' : currentThinking}
-              </span>
-              <ChevronDown className="w-4 h-4 sm:w-3 sm:h-3" />
-            </button>
-            
-            {showThinkingMenu && (
-              <>
-                <div 
-                  className="fixed inset-0 z-40" 
-                  onClick={() => setShowThinkingMenu(false)} 
-                />
-                <div className="absolute top-full right-0 mt-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 min-w-[100px]">
-                  {THINKING_LEVELS.map((level) => (
+                </div>
+                <div className="max-h-[300px] overflow-y-auto">
+                  {models.filter(m => !modelFilter || m.name.toLowerCase().includes(modelFilter.toLowerCase())).map((m, i) => (
                     <button
-                      key={level}
-                      onClick={() => {
-                        onSetThinkingLevel(level);
-                        setShowThinkingMenu(false);
-                      }}
-                      className={`w-full px-4 py-3 sm:px-3 sm:py-2 text-left text-[14px] sm:text-[13px] hover:bg-pi-surface transition-colors ${
-                        currentThinking === level ? 'text-pi-accent' : 'text-pi-text'
+                      key={`${m.provider}:${m.id}`}
+                      onClick={() => { onSetModel(m.provider, m.id); setShowModelMenu(false); inputRef.current?.focus(); }}
+                      className={`w-full px-3 py-2 text-left text-[12px] transition-colors ${
+                        i === modelHighlight ? 'bg-pi-accent/20 text-pi-accent' : 'text-pi-text hover:bg-pi-surface'
                       }`}
                     >
-                      {level === 'off' ? 'Off' : level}
+                      <div className="flex items-center gap-2">
+                        {m.provider === 'anthropic' && <Star className="w-3 h-3 text-pi-accent" />}
+                        <span className="truncate">{m.name}</span>
+                      </div>
                     </button>
                   ))}
                 </div>
-              </>
+              </div>
             )}
           </div>
 
-          {/* Context window usage */}
-          {hasSession && (
-            <span className="flex items-center gap-1.5 text-pi-muted" title={`Context window: ${Math.round(contextPercent)}%`}>
-              <div className="w-12 h-1.5 bg-pi-border rounded-full overflow-hidden">
-                <div
-                  className="h-full transition-all"
-                  style={{
-                    width: `${contextPercent}%`,
-                    backgroundColor: `hsl(${Math.max(0, 120 - contextPercent * 1.2)}, 70%, 45%)`,
-                  }}
-                />
-              </div>
-              <span className="text-[10px] tabular-nums">{Math.round(contextPercent)}%</span>
-            </span>
-          )}
-          
-          {/* Close pane button */}
-          {canClose && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-              className="p-2 sm:p-1 text-pi-muted hover:text-pi-error transition-colors"
-              title="Close pane"
-            >
-              <X className="w-5 h-5 sm:w-3.5 sm:h-3.5" />
-            </button>
-          )}
+          <button
+            onClick={() => onSetThinkingLevel(THINKING_LEVELS[(THINKING_LEVELS.indexOf(currentThinking) + 1) % THINKING_LEVELS.length])}
+            className="px-2 py-1 text-[11px] font-medium rounded bg-pi-surface border border-pi-border text-pi-muted hover:text-pi-text transition-colors"
+          >
+            {currentThinking === 'off' ? 'Off' : currentThinking}
+          </button>
         </div>
       </div>
 
-      {/* Messages */}
-      <div 
+      {activePlan && (
+        <ActivePlanBanner
+          activePlan={activePlan}
+          onToggleTask={onUpdatePlanTask}
+          onDeactivate={onDeactivatePlan}
+        />
+      )}
+
+      {activeJobs.map(job => (
+        <ActiveJobBanner
+          key={job.jobPath}
+          activeJob={job}
+          onToggleTask={onUpdateJobTask}
+        />
+      ))}
+
+      <div
         ref={messagesContainerRef}
         onScroll={handleMessagesScroll}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-5 relative"
+        className="flex-1 overflow-y-auto overflow-x-hidden min-h-0"
       >
         <MessageList
-          keyPrefix={pane.id}
+          keyPrefix={slotId}
           messages={messages}
           streamingText={deferredStreamingText}
           streamingThinking={deferredStreamingThinking}
@@ -1581,115 +1279,85 @@ export const Pane = memo(function Pane({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Active plan banner */}
-      {activePlan && (
-        <ActivePlanBanner
-          activePlan={activePlan}
-          onToggleTask={onUpdatePlanTask}
-          onDeactivate={onDeactivatePlan}
+      {questionnaireRequest && (
+        <QuestionnaireUI
+          request={questionnaireRequest}
+          onResponse={onQuestionnaireResponse}
         />
       )}
 
-      {/* Active job banner — show if this pane's slot matches an active job */}
-      {activeJobs
-        .filter(j => j.sessionSlotId === pane.sessionSlotId)
-        .map(j => (
-          <ActiveJobBanner
-            key={j.jobPath}
-            activeJob={j}
-            onToggleTask={onUpdateJobTask}
-          />
-        ))
-      }
+      {activeExtensionRequest && (
+        <ExtensionUIDialog
+          request={activeExtensionRequest}
+          onResponse={onExtensionUIResponse}
+        />
+      )}
 
-      {/* Input area */}
-      <div className="border-t border-pi-border">
-        {hasInlineDialog && (
-          <div className="border-b border-pi-border bg-pi-bg p-3 flex flex-col gap-3">
-            {questionnaireRequest && (
-              <QuestionnaireUI
-                request={questionnaireRequest}
-                onResponse={onQuestionnaireResponse}
-              />
-            )}
+      {customUIState && (
+        <CustomUIDialog
+          state={customUIState}
+          onInput={onCustomUIInput}
+          onClose={() => {}}
+        />
+      )}
 
-            {activeExtensionRequest && (
-              <ExtensionUIDialog
-                request={activeExtensionRequest}
-                onResponse={onExtensionUIResponse}
-              />
-            )}
-
-            {customUIState && (
-              <CustomUIDialog
-                state={customUIState}
-                onInput={onCustomUIInput}
-                onClose={() => {}}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Image previews */}
-        {imagePreviews.length > 0 && (
-          <div className="px-3 pt-2 flex gap-2 flex-wrap">
-            {imagePreviews.map((url, i) => (
-              <div key={i} className="relative group">
-                <img 
-                  src={url} 
-                  alt={`Attached ${i + 1}`}
-                  className="h-12 w-12 object-cover rounded border border-pi-border"
+      <div className="border-t border-pi-border bg-pi-surface">
+        {attachedImages.length > 0 && (
+          <div className="flex gap-2 p-2 overflow-x-auto">
+            {attachedImages.map((_img, i) => (
+              <div key={i} className="relative flex-shrink-0">
+                <img
+                  src={imagePreviews[i]}
+                  alt="Attached"
+                  className="h-16 w-16 object-cover rounded border border-pi-border"
                 />
                 <button
                   onClick={() => removeImage(i)}
-                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-pi-error text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-[10px]"
+                  className="absolute -top-1 -right-1 w-5 h-5 bg-pi-error text-white rounded-full flex items-center justify-center text-[10px]"
                 >
-                  <X className="w-2.5 h-2.5" />
+                  ×
                 </button>
               </div>
             ))}
           </div>
         )}
 
-        {/* Slash menu */}
-        <div className="p-3 relative">
+        <div className="relative">
           {showSlashMenu && filteredCommands.length > 0 && (
-            <SlashMenu
-              commands={filteredCommands}
-              selectedIndex={selectedCmdIdx}
-              onSelect={(cmd) => executeCommand(cmd.action)}
-            />
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 max-h-[200px] overflow-y-auto">
+              {filteredCommands.map((cmd, i) => (
+                <button
+                  key={cmd.cmd}
+                  onClick={() => executeCommand(cmd.action)}
+                  className={`w-full px-3 py-2 text-left text-[12px] transition-colors ${
+                    i === selectedCmdIdx ? 'bg-pi-accent/20 text-pi-accent' : 'text-pi-text hover:bg-pi-surface'
+                  }`}
+                >
+                  <span className="font-mono text-pi-accent">{cmd.cmd}</span>
+                  <span className="ml-2 text-pi-muted">{cmd.desc}</span>
+                </button>
+              ))}
+            </div>
           )}
 
-          {/* Fork menu */}
-          {showForkMenu && (
-            <ForkDialog
-              messages={forkMessages}
-              selectedIndex={forkSelectedIdx}
-              onSelect={(entryId) => {
-                onFork(entryId);
-                setShowForkMenu(false);
-                setForkMessages([]);
-              }}
-            />
+          {showResumeMenu && filteredSessions.length > 0 && (
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 max-h-[200px] overflow-y-auto">
+              {filteredSessions.map((session, i) => (
+                <button
+                  key={session.id}
+                  onClick={() => selectSession(session.path)}
+                  className={`w-full px-3 py-2 text-left text-[12px] transition-colors ${
+                    i === selectedCmdIdx ? 'bg-pi-accent/20 text-pi-accent' : 'text-pi-text hover:bg-pi-surface'
+                  }`}
+                >
+                  <div className="truncate">{session.name || session.firstMessage || session.id}</div>
+                </button>
+              ))}
+            </div>
           )}
 
-          {/* Tree menu */}
-          {showTreeMenu && (
-            <TreeMenu
-              tree={treeData}
-              currentLeafId={treeCurrentLeafId}
-              selectedIndex={treeSelectedIdx}
-              onSelect={(id) => {
-                onNavigateTree(id);
-                setShowTreeMenu(false);
-              }}
-            />
-          )}
-
-          {/* File reference menu (@ trigger) */}
           {showFileMenu && fileList.length > 0 && (
-            <div className="absolute bottom-full left-3 right-3 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50">
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg z-50 max-h-[200px] overflow-y-auto">
               {fileList.map((file, i) => (
                 <button
                   key={file.path}
@@ -1698,327 +1366,94 @@ export const Pane = memo(function Pane({
                     const newValue = inputValue.slice(0, lastAtIndex) + '@' + file.path + ' ';
                     setInputValue(newValue);
                     setShowFileMenu(false);
-                    setFileList([]);
                   }}
-                  className={`w-full px-3 py-1.5 text-left text-[13px] hover:bg-pi-surface transition-colors flex items-center gap-2 ${
-                    i === selectedCmdIdx ? 'bg-pi-surface' : ''
+                  className={`w-full px-3 py-2 text-left text-[12px] transition-colors ${
+                    i === selectedCmdIdx ? 'bg-pi-accent/20 text-pi-accent' : 'text-pi-text hover:bg-pi-surface'
                   }`}
                 >
-                  <span className="text-pi-muted">@</span>
-                  <span className="text-pi-text truncate">{file.path}</span>
+                  <div className="truncate">{file.name}</div>
+                  <div className="text-pi-muted text-[10px]">{file.path}</div>
                 </button>
               ))}
             </div>
           )}
 
-          {/* Pending follow-ups (local queue - editable/deletable) */}
-          {pendingFollowUps.length > 0 && (
-            <div className="mb-2 px-2 py-1.5 bg-pi-accent/10 border border-pi-accent/30 rounded text-[12px]">
-              <div className="flex items-center gap-2 text-pi-accent mb-1">
-                <span className="font-medium">Queued ({pendingFollowUps.length})</span>
-                <span className="text-pi-muted text-[11px]">will send when agent finishes</span>
-                <button
-                  onClick={() => setPendingFollowUps([])}
-                  className="text-pi-muted hover:text-pi-error ml-auto text-[11px]"
-                  title="Clear all queued messages"
-                >
-                  ✕ clear all
-                </button>
-              </div>
-              <div className="space-y-1 max-h-[120px] overflow-y-auto">
-                {pendingFollowUps.map((msg, i) => (
-                  <div key={i} className="flex items-start gap-2 group">
-                    {editingPendingIndex === i ? (
-                      <input
-                        type="text"
-                        value={editingPendingText}
-                        onChange={(e) => setEditingPendingText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if (editingPendingText.trim()) {
-                              setPendingFollowUps(prev => prev.map((m, idx) => idx === i ? editingPendingText.trim() : m));
-                            } else {
-                              // Delete if empty
-                              setPendingFollowUps(prev => prev.filter((_, idx) => idx !== i));
-                            }
-                            setEditingPendingIndex(null);
-                            setEditingPendingText('');
-                          } else if (e.key === 'Escape') {
-                            setEditingPendingIndex(null);
-                            setEditingPendingText('');
-                          }
-                        }}
-                        onBlur={() => {
-                          if (editingPendingText.trim()) {
-                            setPendingFollowUps(prev => prev.map((m, idx) => idx === i ? editingPendingText.trim() : m));
-                          }
-                          setEditingPendingIndex(null);
-                          setEditingPendingText('');
-                        }}
-                        className="flex-1 bg-pi-surface border border-pi-border rounded px-2 py-0.5 text-pi-text text-[12px] outline-none focus:border-pi-accent"
-                        autoFocus
-                      />
-                    ) : (
-                      <>
-                        <span className="text-pi-accent flex-shrink-0">→</span>
-                        <span 
-                          className="flex-1 text-pi-text cursor-pointer hover:text-pi-accent truncate"
-                          onClick={() => {
-                            setEditingPendingIndex(i);
-                            setEditingPendingText(msg);
-                          }}
-                          title="Click to edit"
-                        >
-                          {msg}
-                        </span>
-                        <button
-                          onClick={() => setPendingFollowUps(prev => prev.filter((_, idx) => idx !== i))}
-                          className="text-pi-muted hover:text-pi-error opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          title="Delete this message"
-                        >
-                          ✕
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+          {showForkMenu && forkMessages.length > 0 && (
+            <ForkDialog
+              messages={forkMessages}
+              selectedIndex={forkSelectedIdx}
+              onSelect={(entryId) => {
+                onFork(entryId);
+                setShowForkMenu(false);
+              }}
+            />
           )}
 
-          {/* Server-side queued messages indicator (from steer) */}
-          {hasQueuedMessages && (
-            <div className="mb-2 px-2 py-1.5 bg-pi-surface/50 rounded text-[11px] text-pi-muted">
-              <div className="flex items-center gap-2">
-                <span>Server queue:</span>
-                {queuedSteering.length > 0 && (
-                  <span className="text-pi-warning">{queuedSteering.length} steer</span>
-                )}
-                {queuedFollowUp.length > 0 && (
-                  <span className="text-pi-accent">{queuedFollowUp.length} follow-up</span>
-                )}
-                <button
-                  onClick={() => {
-                    // Optimistically hide shelf and restore text to input
-                    const allQueued = [...queuedSteering, ...queuedFollowUp];
-                    if (allQueued.length > 0) {
-                      setInputValue(allQueued.join('\n'));
-                    }
-                    setOptimisticQueueClear(true);
-                    onClearQueue();
-                  }}
-                  className="text-pi-muted hover:text-pi-text ml-auto"
-                >
-                  ✕ clear
-                </button>
-              </div>
-              {/* Show actual message content */}
-              <div className="mt-1 space-y-0.5 max-h-[60px] overflow-y-auto">
-                {queuedSteering.map((msg, i) => (
-                  <div key={`steer-${i}`} className="text-pi-warning truncate">
-                    → {msg}
-                  </div>
-                ))}
-                {queuedFollowUp.map((msg, i) => (
-                  <div key={`followup-${i}`} className="text-pi-accent truncate">
-                    → {msg}
-                  </div>
-                ))}
-              </div>
-            </div>
+          {showTreeMenu && treeData.length > 0 && (
+            <TreeMenu
+              tree={treeData}
+              currentLeafId={treeCurrentLeafId}
+              selectedIndex={treeSelectedIdx}
+              onSelect={(targetId) => {
+                onNavigateTree(targetId);
+                setShowTreeMenu(false);
+              }}
+            />
           )}
-          
-          {/* Resume session menu */}
-          {showResumeMenu && (
-            <div 
-              className="absolute bottom-full left-3 right-3 mb-1 bg-pi-bg border border-pi-border rounded shadow-lg max-h-[300px] overflow-y-auto z-50"
-              onClick={(e) => e.stopPropagation()}
+
+          <div className="flex items-end gap-2 p-2">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2 text-pi-muted hover:text-pi-text transition-colors flex-shrink-0"
             >
-              <div className="p-2 border-b border-pi-border">
-                <input
-                  type="text"
-                  value={resumeFilter}
-                  onChange={(e) => { setResumeFilter(e.target.value); setSelectedCmdIdx(0); }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowDown' || e.key === 'Tab') {
-                      e.preventDefault();
-                      setSelectedCmdIdx(i => (i + 1) % Math.max(1, filteredSessions.length));
-                    } else if (e.key === 'ArrowUp') {
-                      e.preventDefault();
-                      setSelectedCmdIdx(i => (i - 1 + filteredSessions.length) % Math.max(1, filteredSessions.length));
-                    } else if (e.key === 'Enter' && filteredSessions.length > 0) {
-                      e.preventDefault();
-                      selectSession(filteredSessions[selectedCmdIdx].path);
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault();
-                      setShowResumeMenu(false);
-                      setInputValue('');
-                    }
-                  }}
-                  placeholder="Filter sessions..."
-                  className="w-full bg-transparent border-none outline-none text-pi-text text-[16px]"
-                  autoFocus
-                />
-              </div>
-              {filteredSessions.map((session, i) => (
-                <button
-                  key={session.id}
-                  onClick={() => selectSession(session.path)}
-                  className={`w-full px-4 py-3 sm:px-3 sm:py-2 text-left text-[14px] sm:text-[13px] hover:bg-pi-surface transition-colors ${
-                    i === selectedCmdIdx ? 'bg-pi-surface' : ''
-                  }`}
-                >
-                  <div className="text-pi-text truncate">
-                    {session.firstMessage || session.name || session.id}
-                  </div>
-                  <div className="text-[12px] sm:text-[11px] text-pi-muted">
-                    {session.id.slice(0, 8)}
-                  </div>
-                </button>
-              ))}
-              {filteredSessions.length === 0 && (
-                <div className="px-3 py-2 text-pi-muted text-[13px]">No sessions found</div>
-              )}
-            </div>
-          )}
+              <ImagePlus className="w-5 h-5" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
 
-          {/* Hidden file input (shared between mobile and desktop) */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-
-          <div className="flex items-start gap-2">
-            {isStreaming ? (
-              <button
-                onClick={() => setStreamingInputMode(m => m === 'steer' ? 'followUp' : 'steer')}
-                className={`mt-0.5 px-1.5 text-[10px] opacity-60 hover:opacity-100 transition-opacity ${
-                  streamingInputMode === 'steer' ? 'text-pi-warning' : 'text-pi-accent'
-                }`}
-                title={streamingInputMode === 'steer'
-                  ? 'Steer: interrupt immediately (hold Alt for follow-up)'
-                  : 'Follow-up: queue after response (release Alt for steer)'}
-              >
-                {streamingInputMode === 'steer' ? 'steer' : 'follow-up'}
-              </button>
-            ) : (
-              <span className="text-[14px] mt-0.5 text-pi-muted hidden sm:block">›</span>
-            )}
             <textarea
               ref={inputRef}
               value={inputValue}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              onFocus={onFocus}
-              placeholder={isStreaming ? (streamingInputMode === 'steer' ? 'steer...' : 'queue follow-up...') : 'Message or /command'}
+              placeholder={isStreaming ? (altHeld ? "Follow-up (Alt held)..." : "Steer the agent...") : "Type a message..."}
+              className="flex-1 min-h-[40px] max-h-[200px] bg-transparent text-pi-text text-[14px] resize-none outline-none placeholder:text-pi-muted py-2"
               rows={1}
-              className="flex-1 bg-transparent border-none outline-none text-pi-text text-[14px] font-mono resize-none min-h-[21px] max-h-[200px] overflow-y-auto"
               style={{ height: 'auto' }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = 'auto';
-                target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
-              }}
             />
-            {/* Desktop action buttons */}
-            <div className="hidden sm:flex items-center gap-1 flex-shrink-0">
-              {/* Attach image */}
+
+            {isStreaming ? (
               <button
-                onClick={() => fileInputRef.current?.click()}
-                className="p-1.5 text-pi-muted hover:text-pi-text transition-colors rounded"
-                title="Attach image"
+                onClick={onAbort}
+                className="p-2 text-pi-error hover:text-pi-error/80 transition-colors flex-shrink-0"
               >
-                <ImagePlus className="w-4 h-4" />
+                <Square className="w-5 h-5 fill-current" />
               </button>
-              {/* Stop agent */}
-              {isStreaming && (
-                <button
-                  onClick={onAbort}
-                  className="p-1.5 text-pi-error hover:text-pi-error/80 transition-colors rounded"
-                  title="Stop agent"
-                >
-                  <Square className="w-4 h-4" />
-                </button>
-              )}
-              
-              {/* Send message */}
+            ) : (
               <button
                 onClick={handleSend}
                 disabled={!inputValue.trim() && attachedImages.length === 0}
-                className={`p-1.5 transition-colors rounded disabled:opacity-30 disabled:cursor-not-allowed ${
-                  isStreaming && streamingInputMode === 'steer'
-                    ? 'text-pi-warning hover:text-pi-warning/80'
-                    : 'text-pi-accent hover:text-pi-accent-hover'
-                }`}
-                title={isStreaming ? (streamingInputMode === 'steer' ? "Steer agent" : "Queue follow-up") : "Send message"}
+                className="p-2 text-pi-accent hover:text-pi-accent/80 transition-colors disabled:opacity-30 flex-shrink-0"
               >
-                <Send className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-          
-          {/* Mobile action buttons */}
-          <div className="flex sm:hidden items-center gap-1 mt-2 pt-2 border-t border-pi-border">
-            
-            {/* Slash command menu */}
-            <button
-              onClick={() => {
-                setInputValue('/');
-                setShowSlashMenu(true);
-                setSlashFilter('/');
-                inputRef.current?.focus();
-              }}
-              className="p-3 text-pi-muted hover:text-pi-text active:text-pi-accent transition-colors rounded"
-              title="Commands"
-            >
-              <Command className="w-6 h-6" />
-            </button>
-            
-            {/* Attach image */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="p-3 text-pi-muted hover:text-pi-text active:text-pi-accent transition-colors rounded"
-              title="Attach image"
-            >
-              <ImagePlus className="w-6 h-6" />
-            </button>
-            
-            <div className="flex-1" />
-            {/* Stop agent */}
-            {isStreaming && (
-              <button
-                onClick={onAbort}
-                className="p-3 text-pi-error hover:text-pi-error/80 active:text-pi-error/60 transition-colors rounded"
-                title="Stop agent"
-              >
-                <Square className="w-6 h-6" />
+                <Send className="w-5 h-5" />
               </button>
             )}
-            
-            {/* Send message */}
-            <button
-              onClick={handleSend}
-              disabled={!inputValue.trim() && attachedImages.length === 0}
-              className={`p-3 transition-colors rounded disabled:opacity-30 disabled:cursor-not-allowed ${
-                isStreaming && streamingInputMode === 'steer'
-                  ? 'text-pi-warning hover:text-pi-warning/80 active:text-pi-warning/60'
-                  : 'text-pi-accent hover:text-pi-accent-hover active:text-pi-accent/60'
-              }`}
-              title={isStreaming ? (streamingInputMode === 'steer' ? "Steer agent" : "Queue follow-up") : "Send message"}
-            >
-              <Send className="w-6 h-6" />
-            </button>
           </div>
         </div>
+
+        {contextPercent > 50 && (
+          <div className="px-3 py-1 text-[10px] text-pi-muted border-t border-pi-border">
+            Context: {contextPercent.toFixed(0)}%
+          </div>
+        )}
       </div>
-
-
     </div>
   );
 });

@@ -119,29 +119,20 @@ export interface PaneLayoutState {
   focusedPaneId: string | null;
 }
 
-export interface PaneLayoutNodePane {
+/** @deprecated Pane layout types removed - each tab has a single session */
+export type PaneLayoutNode = {
   type: 'pane';
   id: string;
   slotId: string;
-}
+};
 
-export interface PaneLayoutNodeSplit {
-  type: 'split';
-  direction: 'horizontal' | 'vertical';
-  children: PaneLayoutNode[];
-  sizes: number[];
-}
-
-export type PaneLayoutNode = PaneLayoutNodePane | PaneLayoutNodeSplit;
-
+/** Simplified tab state - each tab contains exactly one session slot */
 export interface PaneTabPageState {
   id: string;
   label: string;
-  layout: PaneLayoutNode;      // Keep required for now
-  focusedPaneId: string | null; // Keep required for now
-  sessionId?: string | null;   // NEW: direct session binding (optional for migration)
-  sessionPath?: string;        // NEW: path to session file
-  slotId?: string;             // NEW: internal slot ID for this tab
+  slotId: string;
+  sessionId?: string | null;
+  sessionPath?: string;
 }
 
 // Session slot management

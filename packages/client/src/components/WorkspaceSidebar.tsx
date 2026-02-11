@@ -1,18 +1,10 @@
 import { useState, useRef, useCallback, useEffect, type CSSProperties, type MouseEvent, type KeyboardEvent } from 'react';
 import { X, ChevronLeft, ChevronRight, FolderOpen, Settings, MoreHorizontal } from 'lucide-react';
 
-interface PaneSummary {
-  slotId: string;
-  label: string;
-  isStreaming: boolean;
-  isFocused: boolean;
-}
-
 interface ConversationSummary {
   sessionId: string;
   sessionPath?: string;
   label: string;
-  paneLabel?: string;
   slotId?: string;
   isFocused: boolean;
   isStreaming?: boolean;
@@ -25,7 +17,6 @@ interface WorkspaceSidebarItem {
   isActive: boolean;
   isStreaming: boolean;
   needsAttention: boolean;
-  panes: PaneSummary[];
   conversations: ConversationSummary[];
 }
 

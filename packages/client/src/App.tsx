@@ -1,29 +1,27 @@
 /**
  * Pi-Deck
  * 
- * Multi-pane interface - TUI-style web experience.
+ * Tab-based interface - each tab contains one session.
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Menu, FileText, ChevronLeft, X } from 'lucide-react';
+import { Menu, FileText, X } from 'lucide-react';
 import { useWorkspaces } from './hooks/useWorkspaces';
-import { usePanes } from './hooks/usePanes';
+import { useTabs } from './hooks/useTabs';
 import { useNotifications } from './hooks/useNotifications';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useKeyboardVisible } from './hooks/useKeyboardVisible';
-import { PaneManager } from './components/PaneManager';
-
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { DirectoryBrowser } from './components/DirectoryBrowser';
 import { Settings } from './components/Settings';
-// HotkeysDialog merged into Settings
 import { PaneTabsBar } from './components/PaneTabsBar';
 import { WorkspaceRail } from './components/WorkspaceRail';
 import { ConversationSidebar } from './components/ConversationSidebar';
 import { WorkspaceSidebar } from './components/WorkspaceSidebar';
 import { WorkspaceFilesPane } from './components/WorkspaceFilesPane';
+import { SessionView } from './components/SessionView';
 import { useSettings } from './contexts/SettingsContext';
-import type { FileInfo, PaneLayoutNode, PaneTabPageState, ScopedModelInfo } from '@pi-deck/shared';
+import type { FileInfo, PaneTabPageState } from '@pi-deck/shared';
 import { matchesHotkey } from './hotkeys';
 
 const WS_URL = import.meta.env.DEV
@@ -35,27 +33,15 @@ const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 480;
 const RIGHT_PANE_MIN_RATIO = 0.2;
 const RIGHT_PANE_MAX_RATIO = 0.8;
-const RIGHT_PANE_HANDLE_WIDTH = 32;
+// const RIGHT_PANE_HANDLE_WIDTH = 32;  // Removed - no longer needed
 
 const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const createTabId = () => createId('tab');
-const createPaneId = () => createId('pane');
 const createSlotId = () => createId('slot');
-
-const createSinglePaneLayout = (slotId: string, paneId = createPaneId()): PaneLayoutNode => ({
-  type: 'pane',
-  id: paneId,
-  slotId,
-});
 
 const truncateLabel = (label: string, maxLength: number): string => {
   if (label.length <= maxLength) return label;
   return label.slice(0, maxLength - 1) + '…';
-};
-
-const collectPaneNodes = (node: PaneLayoutNode): Array<{ id: string; slotId: string }> => {
-  if (node.type === 'pane') return [node];
-  return node.children.flatMap(collectPaneNodes);
 };
 
 const areFileInfosEqual = (left?: FileInfo[], right?: FileInfo[]): boolean => {
@@ -71,18 +57,6 @@ const areFileInfosEqual = (left?: FileInfo[], right?: FileInfo[]): boolean => {
   });
 };
 
-const areGitStatusEqual = (
-  left?: Array<{ path: string; status: import('@pi-deck/shared').GitFileStatus }>,
-  right?: Array<{ path: string; status: import('@pi-deck/shared').GitFileStatus }>
-): boolean => {
-  if (left === right) return true;
-  if (!left || !right || left.length !== right.length) return false;
-  return left.every((entry, index) => {
-    const other = right[index];
-    return entry.path === other.path && entry.status === other.status;
-  });
-};
-
 function App() {
   const ws = useWorkspaces(WS_URL);
   const notifications = useNotifications({ titlePrefix: 'Pi' });
@@ -93,33 +67,20 @@ function App() {
   
   const [showBrowser, setShowBrowser] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
-  
-  // Scoped models for Settings (requested from focused slot)
-  const [settingsScopedModels, setSettingsScopedModels] = useState<ScopedModelInfo[]>([]);
+  const [settingsScopedModels, setSettingsScopedModels] = useState([]);
   const [needsAttention, setNeedsAttention] = useState<Set<string>>(new Set());
 
-  // New feature state - collapse toggles (not fully implemented yet)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_allToolsCollapsed, setAllToolsCollapsed] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_allThinkingCollapsed, setAllThinkingCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [pendingPaneFocus, setPendingPaneFocus] = useState<{ workspaceId: string; tabId: string; paneId: string } | null>(null);
-  const [pendingSlotAttach, setPendingSlotAttach] = useState<{ workspaceId: string; tabId: string; paneId: string; slotId: string } | null>(null);
-  const [pendingSessionLoad, setPendingSessionLoad] = useState<{
-    workspaceId: string;
-    tabId: string;
-    slotId: string;
-    sessionId: string;
-    sessionPath?: string;
-  } | null>(null);
+  
   const [workspaceEntries, setWorkspaceEntries] = useState<Record<string, Record<string, FileInfo[]>>>({});
-  const [workspaceFileContents, setWorkspaceFileContents] = useState<Record<string, Record<string, { content: string; truncated: boolean }>>>({});
+  const [workspaceFileContents, _setWorkspaceFileContents] = useState<Record<string, Record<string, { content: string; truncated: boolean }>>>({});
   const [workspaceGitStatus, setWorkspaceGitStatus] = useState<Record<string, Array<{ path: string; status: import('@pi-deck/shared').GitFileStatus }>>>({});
   const [workspaceGitBranch, setWorkspaceGitBranch] = useState<Record<string, string | null>>({});
   const [workspaceGitWorktree, setWorkspaceGitWorktree] = useState<Record<string, string | null>>({});
-  const [workspaceFileDiffs, setWorkspaceFileDiffs] = useState<Record<string, Record<string, string>>>({});
-  const [openFilePathByWorkspace, setOpenFilePathByWorkspace] = useState<Record<string, string>>({});
+  const [workspaceFileDiffs, _setWorkspaceFileDiffs] = useState<Record<string, Record<string, string>>>({});
+  const [openFilePathByWorkspace, _setOpenFilePathByWorkspace] = useState<Record<string, string>>({});
   const [selectedFilePathByWorkspace, setSelectedFilePathByWorkspace] = useState<Record<string, string>>({});
   const [viewModeByWorkspace, setViewModeByWorkspace] = useState<Record<string, 'file' | 'diff'>>({});
   const [sidebarWidth, setSidebarWidth] = useState(() => Math.min(Math.max(ws.sidebarWidth, SIDEBAR_MIN_WIDTH), SIDEBAR_MAX_WIDTH));
@@ -131,29 +92,19 @@ function App() {
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
   
-  // Ref for ws to stabilize callbacks that only need send/isConnected
   const wsRef = useRef(ws);
   wsRef.current = ws;
   
   const workspaceEntriesRequestedRef = useRef<Record<string, Set<string>>>({});
   const workspaceFileRequestsRef = useRef<Record<string, Set<string>>>({});
-  const sessionSlotRequestsRef = useRef<Record<string, Set<string>>>({});
   const sessionSlotListRequestedRef = useRef<Set<string>>(new Set());
   
-  // Mobile pane index - tracks which pane is shown on mobile (separate from focusedPaneId)
-  const [mobilePaneIndex, setMobilePaneIndex] = useState(0);
+  const [jobLocations, _setJobLocations] = useState<Array<{ path: string; isDefault: boolean; displayName: string }>>([]);
   
-  // Job locations state
-  const [jobLocations, setJobLocations] = useState<Array<{ path: string; isDefault: boolean; displayName: string }>>([]);
-  
-  // Keep mobile pane index in bounds when panes are added/removed
-  const prevPaneCountRef = useRef(0);
-  
-  const prevStreamingRef = useRef<Record<string, boolean>>({});
-  // Track which slots have had the default model applied (to avoid re-applying)
   const defaultModelAppliedRef = useRef<Set<string>>(new Set());
 
   const activeWorkspacePath = ws.activeWorkspace?.path ?? null;
+  
   const activeWorkspaceTabs = useMemo(() => {
     if (!activeWorkspacePath) return [];
     return ws.paneTabsByWorkspace[activeWorkspacePath] || [];
@@ -168,30 +119,16 @@ function App() {
     return activeWorkspaceTabs[0]?.id ?? null;
   }, [activeWorkspacePath, activeWorkspaceTabs, ws.activePaneTabByWorkspace]);
 
-  const activeTab = useMemo(() => {
+  /* const activeTab = useMemo(() => {
     if (!activeTabId) return null;
     return activeWorkspaceTabs.find((tab) => tab.id === activeTabId) || null;
-  }, [activeTabId, activeWorkspaceTabs]);
+  }, [activeTabId, activeWorkspaceTabs]); */
 
-  const tabIdsByWorkspace = useMemo(() => {
-    const next: Record<string, string[]> = {};
-    ws.workspaces.forEach((workspace) => {
-      const tabs = ws.paneTabsByWorkspace[workspace.path] || [];
-      next[workspace.id] = tabs.map((tab) => tab.id);
-    });
-    return next;
-  }, [ws.workspaces, ws.paneTabsByWorkspace]);
-
-  // Pane management - connected to workspace session slots
-  const panes = usePanes({
+  // Tab management - simplified, each tab has exactly one slot
+  const { tab, focusedSlotId } = useTabs({
     workspace: ws.activeWorkspace,
-    workspaceIds: ws.workspaces.map(w => w.id),
     tabId: activeTabId,
-    tabIdsByWorkspace,
-    initialLayout: activeTab?.layout ?? null,
-    initialFocusedPaneId: activeTab?.focusedPaneId ?? null,
-    onCreateSlot: ws.createSessionSlotForWorkspace,
-    onCloseSlot: ws.closeSessionSlotForWorkspace,
+    tabs: activeWorkspaceTabs,
   });
 
   useEffect(() => {
@@ -204,97 +141,6 @@ function App() {
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
   }, [sidebarWidth]);
-
-  // Keep mobile pane index in bounds and sync with focused pane
-  useEffect(() => {
-    const paneCount = panes.panes.length;
-    
-    // Clamp index if out of bounds
-    if (mobilePaneIndex >= paneCount && paneCount > 0) {
-      setMobilePaneIndex(paneCount - 1);
-    }
-    
-    // If a pane was added (count increased), switch to the new pane
-    if (paneCount > prevPaneCountRef.current && paneCount > 1) {
-      setMobilePaneIndex(paneCount - 1);
-    }
-    
-    prevPaneCountRef.current = paneCount;
-  }, [panes.panes.length, mobilePaneIndex]);
-  
-  // Sync focus when mobile pane changes
-  useEffect(() => {
-    if (isMobile && panes.panes[mobilePaneIndex]) {
-      panes.focusPane(panes.panes[mobilePaneIndex].id);
-    }
-  }, [isMobile, mobilePaneIndex, panes]);
-
-  // Auto-collapse right pane when entering mobile width
-  useEffect(() => {
-    if (isMobile && activeWs?.path) {
-      const isOpen = ws.rightPaneByWorkspace[activeWs.path] ?? false;
-      if (isOpen) {
-        ws.setWorkspaceRightPaneOpen(activeWs.path, false);
-      }
-    }
-  }, [isMobile]); // eslint-disable-line react-hooks/exhaustive-deps -- only trigger on mobile transition
-
-  const focusPaneById = useCallback((paneId: string) => {
-    panes.focusPane(paneId);
-    if (isMobile) {
-      const idx = panes.panes.findIndex((pane) => pane.id === paneId);
-      if (idx >= 0) {
-        setMobilePaneIndex(idx);
-      }
-    }
-  }, [panes, isMobile]);
-
-  useEffect(() => {
-    if (!pendingPaneFocus) return;
-    if (pendingPaneFocus.workspaceId !== ws.activeWorkspaceId) return;
-    if (pendingPaneFocus.tabId !== activeTabId) return;
-    focusPaneById(pendingPaneFocus.paneId);
-    setPendingPaneFocus(null);
-  }, [pendingPaneFocus, ws.activeWorkspaceId, activeTabId, focusPaneById]);
-
-  useEffect(() => {
-    if (!pendingSlotAttach) return;
-    if (pendingSlotAttach.workspaceId !== ws.activeWorkspaceId) return;
-    if (pendingSlotAttach.tabId !== activeTabId) return;
-    panes.updatePaneSlot(pendingSlotAttach.paneId, pendingSlotAttach.slotId);
-    focusPaneById(pendingSlotAttach.paneId);
-    setPendingSlotAttach(null);
-  }, [pendingSlotAttach, ws.activeWorkspaceId, activeTabId, panes.updatePaneSlot, focusPaneById]);
-
-  const resolveSessionPath = useCallback((workspaceId: string, sessionId: string, sessionPath?: string) => {
-    if (sessionPath) return sessionPath;
-    const workspace = ws.workspaces.find((wsItem) => wsItem.id === workspaceId);
-    const fromList = workspace?.sessions.find((session) => session.id === sessionId)?.path;
-    if (fromList) return fromList;
-    const fromSlot = Object.values(workspace?.slots || {})
-      .find((slot) => slot.state?.sessionId === sessionId)?.state?.sessionFile;
-    if (fromSlot) return fromSlot;
-    if (sessionId.includes('/') || sessionId.endsWith('.jsonl')) return sessionId;
-    return null;
-  }, [ws.workspaces]);
-
-  useEffect(() => {
-    if (!pendingSessionLoad) return;
-    if (pendingSessionLoad.workspaceId !== ws.activeWorkspaceId) return;
-    if (pendingSessionLoad.tabId !== activeTabId) return;
-    const targetSession = resolveSessionPath(
-      pendingSessionLoad.workspaceId,
-      pendingSessionLoad.sessionId,
-      pendingSessionLoad.sessionPath
-    );
-    if (!targetSession) {
-      console.warn('[App] Missing session path for switchSession', pendingSessionLoad);
-      setPendingSessionLoad(null);
-      return;
-    }
-    ws.switchSession(pendingSessionLoad.slotId, targetSession);
-    setPendingSessionLoad(null);
-  }, [pendingSessionLoad, resolveSessionPath, ws.activeWorkspaceId, activeTabId, ws.switchSession]);
 
   // Track when agent finishes for notifications
   useEffect(() => {
@@ -317,6 +163,8 @@ function App() {
     }
   }, [ws.workspaces, ws.activeWorkspaceId, notifications]);
 
+  const prevStreamingRef = useRef<Record<string, boolean>>({});
+
   // Apply default model to newly initialized sessions
   useEffect(() => {
     const { defaultModelKey, defaultThinkingLevel } = settings;
@@ -328,15 +176,10 @@ function App() {
     for (const workspace of ws.workspaces) {
       for (const [slotId, slot] of Object.entries(workspace.slots)) {
         const key = `${workspace.id}:${slotId}`;
-        // Only apply once per slot, and only when the session first appears
-        // with 0 messages (fresh session, not a resumed one)
         if (defaultModelAppliedRef.current.has(key)) continue;
         if (!slot.state?.sessionId) continue;
-        // Mark as applied immediately to avoid duplicate sends
         defaultModelAppliedRef.current.add(key);
-        // Only apply to fresh sessions (no messages yet)
         if (slot.messages.length > 0 || (slot.state.messageCount ?? 0) > 0) continue;
-        // Don't override if the slot already has the correct model
         if (slot.state.model?.provider === provider && slot.state.model?.id === modelId) continue;
         ws.setModel(slotId, provider, modelId);
         if (defaultThinkingLevel && defaultThinkingLevel !== 'off') {
@@ -345,49 +188,6 @@ function App() {
       }
     }
   }, [ws.workspaces, settings.defaultModelKey, settings.defaultThinkingLevel, ws.setModel, ws.setThinkingLevel]);
-
-  // Notify on job phase changes (auto-promote)
-  useEffect(() => {
-    const handleJobPromoted = (e: CustomEvent<{ workspaceId: string; job: { title: string; phase: string } }>) => {
-      const { job } = e.detail;
-      const phaseLabels: Record<string, string> = {
-        planning: 'Planning',
-        ready: 'Ready',
-        executing: 'Executing',
-        review: 'Review',
-        complete: 'Complete ✓',
-      };
-      const phaseLabel = phaseLabels[job.phase] || job.phase;
-      notifications.notify(`Job → ${phaseLabel}`, {
-        body: job.title,
-      });
-    };
-
-    window.addEventListener('pi:jobPromoted', handleJobPromoted as EventListener);
-    return () => window.removeEventListener('pi:jobPromoted', handleJobPromoted as EventListener);
-  }, [notifications]);
-
-  // Listen for job config updates
-  useEffect(() => {
-    const handleJobConfigUpdated = (e: CustomEvent<{ workspaceId: string; locations: Array<{ path: string; isDefault: boolean; displayName: string }>; defaultLocation: string }>) => {
-      setJobLocations(e.detail.locations);
-      // defaultLocation is handled within the locations array via isDefault flag
-    };
-
-    window.addEventListener('pi:jobConfigUpdated', handleJobConfigUpdated as EventListener);
-    return () => window.removeEventListener('pi:jobConfigUpdated', handleJobConfigUpdated as EventListener);
-  }, []);
-
-  // Listen for job locations (initial load)
-  useEffect(() => {
-    const handleJobLocations = (e: CustomEvent<{ workspaceId: string; locations: Array<{ path: string; isDefault: boolean; displayName: string }>; defaultLocation: string }>) => {
-      setJobLocations(e.detail.locations);
-      // defaultLocation is handled within the locations array via isDefault flag
-    };
-
-    window.addEventListener('pi:jobLocations', handleJobLocations as EventListener);
-    return () => window.removeEventListener('pi:jobLocations', handleJobLocations as EventListener);
-  }, []);
 
   // Clear attention when switching workspace
   useEffect(() => {
@@ -400,7 +200,7 @@ function App() {
     }
   }, [ws.activeWorkspaceId]);
 
-  // Listen for plan activation — create a new tab for the plan's session slot
+  // Listen for plan activation - create a new tab for the plan's session slot
   useEffect(() => {
     const handlePlanSlotCreated = (e: CustomEvent<{ workspaceId: string; sessionSlotId: string; planTitle?: string }>) => {
       const { workspaceId, sessionSlotId, planTitle } = e.detail;
@@ -409,12 +209,10 @@ function App() {
       const workspacePath = workspace.path;
       const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
       const newTabId = createTabId();
-      const newPaneId = createPaneId();
       const newTab: PaneTabPageState = {
         id: newTabId,
         label: planTitle || 'Plan',
-        layout: createSinglePaneLayout(sessionSlotId, newPaneId),
-        focusedPaneId: newPaneId,
+        slotId: sessionSlotId,
       };
       ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
     };
@@ -423,7 +221,7 @@ function App() {
     return () => window.removeEventListener('pi:planSlotCreated', handlePlanSlotCreated as EventListener);
   }, [ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
-  // Listen for job promotion — create a new tab for the job's session slot
+  // Listen for job promotion - create a new tab for the job's session slot
   useEffect(() => {
     const handleJobSlotCreated = (e: CustomEvent<{ workspaceId: string; sessionSlotId: string }>) => {
       const { workspaceId, sessionSlotId } = e.detail;
@@ -432,26 +230,20 @@ function App() {
       const workspacePath = workspace.path;
       const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
 
-      // Check if a tab for this slot already exists (re-promotion)
-      const existingTab = tabs.find(t =>
-        t.layout.type === 'pane' && t.layout.slotId === sessionSlotId
-      );
+      // Check if a tab for this slot already exists
+      const existingTab = tabs.find(t => t.slotId === sessionSlotId);
       if (existingTab) {
-        // Just switch to the existing tab
         ws.setPaneTabsForWorkspace(workspacePath, tabs, existingTab.id);
         return;
       }
 
       const newTabId = createTabId();
-      const newPaneId = createPaneId();
-      // Derive label from slot ID: "job-planning-..." → "Job: Planning", "job-executing-..." → "Job: Executing", "job-review-..." → "Job: Review"
       const phaseMatch = sessionSlotId.match(/^job-(planning|executing|review)/);
       const label = phaseMatch ? `Job: ${phaseMatch[1].charAt(0).toUpperCase() + phaseMatch[1].slice(1)}` : 'Job';
       const newTab: PaneTabPageState = {
         id: newTabId,
         label,
-        layout: createSinglePaneLayout(sessionSlotId, newPaneId),
-        focusedPaneId: newPaneId,
+        slotId: sessionSlotId,
       };
       ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
     };
@@ -460,7 +252,7 @@ function App() {
     return () => window.removeEventListener('pi:jobSlotCreated', handleJobSlotCreated as EventListener);
   }, [ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
-  // Listen for /jobs slash command — open right pane to jobs tab
+  // Listen for /jobs slash command - open right pane to jobs tab
   useEffect(() => {
     const handleOpenJobs = (e: CustomEvent<{ mode?: 'list' | 'create' }>) => {
       if (ws.activeWorkspace?.path) {
@@ -502,7 +294,6 @@ function App() {
     return () => window.removeEventListener('pi:workspaceEntries', handleWorkspaceEntries as EventListener);
   }, []);
 
-  // Handle directory entries updates from file watcher sync
   useEffect(() => {
     const handleDirectoryEntries = (e: CustomEvent<{ workspaceId: string; directoryPath: string; entries: FileInfo[] }>) => {
       setWorkspaceEntries(prev => {
@@ -525,81 +316,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const handleWorkspaceFile = (e: CustomEvent<{ workspaceId: string; path: string; content: string; truncated?: boolean; requestId?: string }>) => {
-      if (e.detail.requestId && !e.detail.requestId.startsWith('workspace-file:')) return;
-      setWorkspaceFileContents(prev => {
-        const existing = prev[e.detail.workspaceId]?.[e.detail.path];
-        const nextEntry = { content: e.detail.content, truncated: Boolean(e.detail.truncated) };
-        if (existing && existing.content === nextEntry.content && existing.truncated === nextEntry.truncated) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [e.detail.workspaceId]: {
-            ...(prev[e.detail.workspaceId] || {}),
-            [e.detail.path]: nextEntry,
-          },
-        };
-      });
-      const requested = workspaceFileRequestsRef.current[e.detail.workspaceId];
-      if (requested) {
-        requested.delete(e.detail.path);
-      }
-    };
-
-    window.addEventListener('pi:workspaceFile', handleWorkspaceFile as EventListener);
-    return () => window.removeEventListener('pi:workspaceFile', handleWorkspaceFile as EventListener);
-  }, []);
-
-  useEffect(() => {
     const handleGitStatus = (e: CustomEvent<{ workspaceId: string; files: Array<{ path: string; status: import('@pi-deck/shared').GitFileStatus }>; branch?: string | null; worktree?: string | null; requestId?: string }>) => {
-      setWorkspaceGitStatus(prev => {
-        const existing = prev[e.detail.workspaceId];
-        if (areGitStatusEqual(existing, e.detail.files)) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [e.detail.workspaceId]: e.detail.files,
-        };
-      });
+      setWorkspaceGitStatus(prev => ({
+        ...prev,
+        [e.detail.workspaceId]: e.detail.files,
+      }));
       if (e.detail.branch !== undefined) {
-        setWorkspaceGitBranch(prev => {
-          if (prev[e.detail.workspaceId] === e.detail.branch) return prev;
-          return { ...prev, [e.detail.workspaceId]: e.detail.branch ?? null };
-        });
+        setWorkspaceGitBranch(prev => ({ ...prev, [e.detail.workspaceId]: e.detail.branch ?? null }));
       }
       if (e.detail.worktree !== undefined) {
-        setWorkspaceGitWorktree(prev => {
-          if (prev[e.detail.workspaceId] === e.detail.worktree) return prev;
-          return { ...prev, [e.detail.workspaceId]: e.detail.worktree ?? null };
-        });
+        setWorkspaceGitWorktree(prev => ({ ...prev, [e.detail.workspaceId]: e.detail.worktree ?? null }));
       }
     };
 
     window.addEventListener('pi:gitStatus', handleGitStatus as EventListener);
     return () => window.removeEventListener('pi:gitStatus', handleGitStatus as EventListener);
-  }, []);
-
-  useEffect(() => {
-    const handleFileDiff = (e: CustomEvent<{ workspaceId: string; path: string; diff: string; requestId?: string }>) => {
-      setWorkspaceFileDiffs(prev => {
-        const existing = prev[e.detail.workspaceId]?.[e.detail.path];
-        if (existing === e.detail.diff) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [e.detail.workspaceId]: {
-            ...(prev[e.detail.workspaceId] || {}),
-            [e.detail.path]: e.detail.diff,
-          },
-        };
-      });
-    };
-
-    window.addEventListener('pi:fileDiff', handleFileDiff as EventListener);
-    return () => window.removeEventListener('pi:fileDiff', handleFileDiff as EventListener);
   }, []);
 
   const requestWorkspaceEntries = useCallback((workspaceId: string, path: string) => {
@@ -613,8 +344,6 @@ function App() {
     wsRef.current.listWorkspaceEntries(workspaceId, normalizedPath, requestId);
   }, []);
 
-  // File watching for expanded directories
-  // Use wsRef to keep callbacks stable (avoids SidebarFileTree useEffect re-triggering)
   const watchDirectory = useCallback((workspaceId: string, path: string) => {
     if (!wsRef.current.isConnected) return;
     wsRef.current.watchDirectory(workspaceId, path);
@@ -627,7 +356,6 @@ function App() {
 
   const requestWorkspaceFile = useCallback((workspaceId: string, path: string) => {
     if (!ws.isConnected) return;
-    // Preserve absolute and ~/ paths; strip stray leading slashes from relative paths
     const normalizedPath = (path.startsWith('/') || path.startsWith('~/')) ? path : path.replace(/^\/+/, '');
     if (!normalizedPath) return;
     const requested = workspaceFileRequestsRef.current[workspaceId] || new Set<string>();
@@ -648,26 +376,21 @@ function App() {
     ws.getFileDiff(workspaceId, path);
   }, [ws]);
 
-  const normalizeFileLink = useCallback((path: string) => {
+  /* const normalizeFileLink = useCallback((path: string) => {
     const trimmed = path.replace(/^file:\/\//i, '');
-    // Expand ~/ to home directory so paths are comparable with workspace paths
     if (trimmed.startsWith('~/') && ws.homeDirectory) {
       return ws.homeDirectory.replace(/\/+$/, '') + '/' + trimmed.slice(2);
     }
-    // Preserve absolute paths
     if (trimmed.startsWith('/')) return trimmed;
-    // Relative paths: strip ./ prefix
     return trimmed.replace(/^\.\//, '');
-  }, [ws.homeDirectory]);
+  }, [ws.homeDirectory]); */
 
-  // Handle file selection from sidebar tree
   const handleSelectFile = useCallback((path: string) => {
     if (!ws.activeWorkspace) return;
     const workspaceId = ws.activeWorkspace.id;
     setSelectedFilePathByWorkspace(prev => ({ ...prev, [workspaceId]: path }));
     setViewModeByWorkspace(prev => ({ ...prev, [workspaceId]: 'file' }));
     requestWorkspaceFile(workspaceId, path);
-    // Open right pane if closed, switch to preview tab
     const isOpen = ws.rightPaneByWorkspace[ws.activeWorkspace.path] ?? false;
     if (!isOpen) ws.setWorkspaceRightPaneOpen(ws.activeWorkspace.path, true);
     window.dispatchEvent(new CustomEvent('pi:switchRightPaneTab', { detail: { tab: 'preview' } }));
@@ -683,34 +406,6 @@ function App() {
     if (!isOpen) ws.setWorkspaceRightPaneOpen(ws.activeWorkspace.path, true);
     window.dispatchEvent(new CustomEvent('pi:switchRightPaneTab', { detail: { tab: 'preview' } }));
   }, [ws.activeWorkspace, ws.rightPaneByWorkspace, ws.setWorkspaceRightPaneOpen, requestFileDiff]);
-
-  useEffect(() => {
-    const handleOpenFile = (e: CustomEvent<{ path: string }>) => {
-      if (!ws.activeWorkspace) return;
-      const normalizedPath = normalizeFileLink(e.detail.path || '');
-      if (!normalizedPath) return;
-
-      const workspaceId = ws.activeWorkspace.id;
-      const workspacePath = ws.activeWorkspace.path;
-      // Compute relative path for tree highlighting
-      const wsPrefix = workspacePath.endsWith('/') ? workspacePath : workspacePath + '/';
-      const relativePath = normalizedPath.startsWith(wsPrefix)
-        ? normalizedPath.slice(wsPrefix.length)
-        : normalizedPath;
-      setOpenFilePathByWorkspace((prev) => ({ ...prev, [workspaceId]: normalizedPath }));
-      setSelectedFilePathByWorkspace(prev => ({ ...prev, [workspaceId]: relativePath }));
-      setViewModeByWorkspace(prev => ({ ...prev, [workspaceId]: 'file' }));
-      requestWorkspaceFile(workspaceId, normalizedPath);
-
-      const isOpen = ws.rightPaneByWorkspace[workspacePath] ?? false;
-      if (!isOpen) {
-        ws.setWorkspaceRightPaneOpen(workspacePath, true);
-      }
-    };
-
-    window.addEventListener('pi:openFile', handleOpenFile as EventListener);
-    return () => window.removeEventListener('pi:openFile', handleOpenFile as EventListener);
-  }, [normalizeFileLink, requestWorkspaceFile, ws.activeWorkspace, ws.rightPaneByWorkspace, ws.setWorkspaceRightPaneOpen]);
 
   const toggleRightPane = useCallback(() => {
     if (!ws.activeWorkspace?.path) return;
@@ -791,16 +486,6 @@ function App() {
     };
   }, [isRightPaneResizing]);
 
-  const handleClosePane = useCallback((paneId: string) => {
-    const pane = panes.panes.find((item) => item.id === paneId);
-    if (!pane) return;
-    if (panes.panes.length <= 1) {
-      ws.newSession(pane.sessionSlotId);
-      return;
-    }
-    panes.closePane(paneId);
-  }, [panes.panes, panes.closePane, ws]);
-
   // Keyboard shortcuts
   const handleKeyDown = useCallback((e: KeyboardEvent | React.KeyboardEvent) => {
     const isMod = e.metaKey || e.ctrlKey;
@@ -811,7 +496,6 @@ function App() {
       target.isContentEditable
     ) : false;
 
-    // Escape closes modals/settings
     if (e.key === 'Escape') {
       if (isSettingsOpen) {
         closeSettings();
@@ -827,7 +511,6 @@ function App() {
       return;
     }
 
-    // Configurable hotkeys (checked via matchesHotkey)
     if (matchesHotkey(e, 'showHotkeys', hk)) {
       e.preventDefault();
       openSettings('keyboard');
@@ -853,25 +536,8 @@ function App() {
       window.dispatchEvent(new CustomEvent('pi:openJobs', { detail: { mode: 'list' } }));
       return;
     }
-    if (matchesHotkey(e, 'splitVertical', hk) && !isMobile) {
-      e.preventDefault();
-      panes.split('vertical');
-      return;
-    }
-    if (matchesHotkey(e, 'splitHorizontal', hk) && !isMobile) {
-      e.preventDefault();
-      panes.split('horizontal');
-      return;
-    }
-    if (matchesHotkey(e, 'closePane', hk)) {
-      e.preventDefault();
-      if (panes.focusedPaneId) {
-        handleClosePane(panes.focusedPaneId);
-      }
-      return;
-    }
 
-    // ⌘1-9 - Switch tab by number (not configurable — positional)
+    // ⌘1-9 - Switch tab by number
     if (isMod && e.key >= '1' && e.key <= '9') {
       const idx = parseInt(e.key) - 1;
       if (idx < activeWorkspaceTabs.length && ws.activeWorkspace) {
@@ -883,12 +549,12 @@ function App() {
       return;
     }
 
-    if (matchesHotkey(e, 'stopAgent', hk) && panes.focusedSlotId) {
+    if (matchesHotkey(e, 'stopAgent', hk) && focusedSlotId) {
       e.preventDefault();
-      ws.abort(panes.focusedSlotId);
+      ws.abort(focusedSlotId);
       return;
     }
-  }, [showBrowser, isSettingsOpen, closeSettings, openSettings, toggleRightPane, isMobile, panes, handleClosePane, ws, activeWorkspaceTabs, hk]);
+  }, [showBrowser, isSettingsOpen, closeSettings, openSettings, toggleRightPane, focusedSlotId, ws, activeWorkspaceTabs, hk]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -901,10 +567,10 @@ function App() {
     };
   }, [handleKeyDown]);
 
-  // Request scoped models when settings opens, listen for response
+  // Request scoped models when settings opens
   useEffect(() => {
     if (!isSettingsOpen) return;
-    const slotId = panes.focusedSlotId || 'default';
+    const slotId = focusedSlotId || 'default';
     ws.getScopedModels(slotId);
 
     const handler = (e: Event) => {
@@ -913,16 +579,10 @@ function App() {
     };
     window.addEventListener('pi:scopedModels', handler);
     return () => window.removeEventListener('pi:scopedModels', handler);
-  }, [isSettingsOpen, panes.focusedSlotId, ws]);
+  }, [isSettingsOpen, focusedSlotId, ws]);
 
-  // Handle deploy
   const handleDeploy = useCallback(() => {
     ws.deploy();
-  }, [ws]);
-
-  // Handle questionnaire response
-  const handleQuestionnaireResponse = useCallback((slotId: string, toolCallId: string, response: string) => {
-    ws.sendQuestionnaireResponse(slotId, toolCallId, response);
   }, [ws]);
 
   const handleSelectWorkspace = useCallback((workspaceId: string) => {
@@ -932,24 +592,7 @@ function App() {
     }
   }, [ws, isMobile]);
 
-  const slotToTabByWorkspace = useMemo(() => {
-    const result: Record<string, Map<string, { tabId: string; paneId: string }>> = {};
-    ws.workspaces.forEach((workspace) => {
-      const tabs = ws.paneTabsByWorkspace[workspace.path] || [];
-      const slotMap = new Map<string, { tabId: string; paneId: string }>();
-      tabs.forEach((tab) => {
-        collectPaneNodes(tab.layout).forEach((pane) => {
-          if (!slotMap.has(pane.slotId)) {
-            slotMap.set(pane.slotId, { tabId: tab.id, paneId: pane.id });
-          }
-        });
-      });
-      result[workspace.id] = slotMap;
-    });
-    return result;
-  }, [ws.workspaces, ws.paneTabsByWorkspace]);
-
-  // SIMPLIFIED: Find-or-create pattern for conversation selection
+  // Find-or-create pattern for conversation selection
   const handleSelectConversation = useCallback((workspaceId: string, sessionId: string, sessionPath?: string, _slotId?: string, label?: string) => {
     const workspace = ws.workspaces.find((wsItem) => wsItem.id === workspaceId);
     if (!workspace) return;
@@ -957,10 +600,9 @@ function App() {
     const workspacePath = workspace.path;
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
     
-    // 1. Check if this conversation is already open
+    // Check if this conversation is already open
     const existingTab = tabs.find(t => t.sessionId === sessionId);
     if (existingTab) {
-      // Switch to existing tab
       ws.setPaneTabsForWorkspace(workspacePath, tabs, existingTab.id);
       if (workspaceId !== ws.activeWorkspaceId) {
         ws.setActiveWorkspace(workspaceId);
@@ -968,10 +610,9 @@ function App() {
       return;
     }
     
-    // 2. Create new tab bound to this session
+    // Create new tab bound to this session
     const newTabId = createTabId();
     const newSlotId = createSlotId();
-    const newPaneId = createPaneId();
     
     const newTab: PaneTabPageState = {
       id: newTabId,
@@ -979,14 +620,9 @@ function App() {
       sessionId: sessionId,
       sessionPath: sessionPath,
       slotId: newSlotId,
-      layout: createSinglePaneLayout(newSlotId, newPaneId),
-      focusedPaneId: newPaneId,
     };
     
-    // Create slot on server
     ws.createSessionSlotForWorkspace(workspaceId, newSlotId);
-    
-    // Add tab and make active
     ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
     
     if (workspaceId !== ws.activeWorkspaceId) {
@@ -994,11 +630,10 @@ function App() {
     }
     
     // Load session
-    const targetSession = resolveSessionPath(workspaceId, sessionId, sessionPath);
-    if (targetSession) {
-      ws.switchSession(newSlotId, targetSession);
+    if (sessionPath) {
+      ws.switchSession(newSlotId, sessionPath);
     }
-  }, [resolveSessionPath, ws, ws.activeWorkspaceId]);
+  }, [ws, ws.activeWorkspaceId]);
 
   const handleRenameConversation = useCallback((workspaceId: string, sessionId: string, sessionPath: string | undefined, newName: string) => {
     const trimmedName = newName.trim();
@@ -1023,142 +658,70 @@ function App() {
     handleDeleteConversation(ws.activeWorkspaceId, sessionId, sessionPath, label);
   }, [handleDeleteConversation, ws.activeWorkspaceId]);
 
-  /** Navigate to the tab containing a given session slot (e.g. job planning/executing/review) */
+  /** Navigate to the tab containing a given session slot */
   const handleNavigateToSlot = useCallback((slotId: string) => {
     if (!ws.activeWorkspaceId) return;
     const workspace = ws.workspaces.find(w => w.id === ws.activeWorkspaceId);
     if (!workspace) return;
     const workspacePath = workspace.path;
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
-    const slotMap = slotToTabByWorkspace[ws.activeWorkspaceId];
-    const tabInfo = slotMap?.get(slotId);
+    const existingTab = tabs.find(t => t.slotId === slotId);
 
-    if (tabInfo) {
-      // Tab exists — switch to it and focus the pane
-      ws.setPaneTabsForWorkspace(workspacePath, tabs, tabInfo.tabId);
-      setPendingPaneFocus({ workspaceId: ws.activeWorkspaceId, tabId: tabInfo.tabId, paneId: tabInfo.paneId });
+    if (existingTab) {
+      ws.setPaneTabsForWorkspace(workspacePath, tabs, existingTab.id);
     } else {
-      // No tab for this slot — create one (mirrors handleJobSlotCreated logic)
+      // No tab for this slot - create one
       const newTabId = createTabId();
-      const newPaneId = createPaneId();
       const phaseMatch = slotId.match(/^job-(planning|executing|review)/);
       const label = phaseMatch ? `Job: ${phaseMatch[1].charAt(0).toUpperCase() + phaseMatch[1].slice(1)}` : 'Job';
       const newTab: PaneTabPageState = {
         id: newTabId,
         label,
-        layout: createSinglePaneLayout(slotId, newPaneId),
-        focusedPaneId: newPaneId,
+        slotId: slotId,
       };
       ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
     }
-  }, [ws.activeWorkspaceId, ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace, slotToTabByWorkspace]);
+  }, [ws.activeWorkspaceId, ws.workspaces, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
-  // Extract conversation data separately to avoid recalculation during streaming
-  // This extracts only the stable data (not streamingText/streamingThinking)
-  const workspaceConversationData = useMemo(() => {
-    const result: Record<string, {
-      sessions: typeof ws.workspaces[0]['sessions'];
-      slots: Record<string, {
-        sessionId: string | undefined;
-        sessionFile: string | undefined;
-        sessionName: string | undefined;
-        isStreaming: boolean;
-        hasMessages: boolean;
-        firstUserMessage: string | undefined;
-        latestTimestamp: number;
-      }>;
-    }> = {};
-
-    ws.workspaces.forEach((workspace) => {
-      const slotData: Record<string, {
-        sessionId: string | undefined;
-        sessionFile: string | undefined;
-        sessionName: string | undefined;
-        isStreaming: boolean;
-        hasMessages: boolean;
-        firstUserMessage: string | undefined;
-        latestTimestamp: number;
-      }> = {};
-
-      Object.entries(workspace.slots).forEach(([slotId, slot]) => {
-        const firstUserMessage = slot.messages.find((message) => message.role === 'user')?.content
-          ?.find((content) => content.type === 'text')?.text;
-        
-        const latestTimestamp = slot.messages.length > 0
-          ? slot.messages.reduce((latest, message) => Math.max(latest, message.timestamp ?? 0), 0)
-          : 0;
-
-        slotData[slotId] = {
-          sessionId: slot.state?.sessionId,
-          sessionFile: slot.state?.sessionFile,
-          sessionName: slot.state?.sessionName,
-          isStreaming: slot.isStreaming,
-          hasMessages: slot.messages.length > 0 || (slot.state?.messageCount ?? 0) > 0,
-          firstUserMessage,
-          latestTimestamp,
-        };
-      });
-
-      result[workspace.id] = {
-        sessions: workspace.sessions,
-        slots: slotData,
-      };
-    });
-
-    return result;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    // Depend on workspace/slot identity AND session assignment
-    // Include slot sessionIds so we detect when sessions are loaded into slots
-    ws.workspaces.map(w => {
-      const slotKeys = Object.keys(w.slots).sort();
-      const slotSessions = slotKeys.map(k => w.slots[k].state?.sessionId || '-').join(',');
-      return `${w.id}:${w.sessions.length}:${slotKeys.join(',')}:${slotSessions}`;
-    }).join('|')
-  ]);
-
-  // Build sidebar data using the extracted conversation data
+  // Build sidebar workspaces data
   const sidebarWorkspaces = useMemo(() => {
     return ws.workspaces.map((workspace) => {
       const isActive = workspace.id === ws.activeWorkspaceId;
       const isStreaming = Object.values(workspace.slots).some((slot) => slot.isStreaming);
       const tabs = ws.paneTabsByWorkspace[workspace.path] || [];
-      const activeTabForWorkspace = ws.activePaneTabByWorkspace[workspace.path] || tabs[0]?.id || null;
-      const slotMap = slotToTabByWorkspace[workspace.id] || new Map();
 
-      const convData = workspaceConversationData[workspace.id];
-      if (!convData) {
-        return {
-          id: workspace.id,
-          name: workspace.name,
-          path: workspace.path,
-          isActive,
-          isStreaming,
-          needsAttention: needsAttention.has(workspace.id),
-          panes: [],
-          conversations: [],
-        };
-      }
-
-      // Build session slot info from extracted data
-      const sessionSlotInfo = new Map<string, { slotIds: string[]; isStreaming: boolean }>();
-      Object.entries(convData.slots).forEach(([slotId, slot]) => {
-        if (!slot.sessionId) return;
-        const entry = sessionSlotInfo.get(slot.sessionId) || { slotIds: [], isStreaming: false };
-        entry.slotIds.push(slotId);
-        if (slot.isStreaming) entry.isStreaming = true;
-        sessionSlotInfo.set(slot.sessionId, entry);
-      });
-
-
-      // Build session map from extracted data
+      // Build session map from slots
       const sessionMap = new Map<string, { sessionId: string; sessionPath?: string; label: string; updatedAt: number }>();
       
-      convData.sessions.forEach((session) => {
+      Object.entries(workspace.slots).forEach(([, slot]) => {
+        if (!slot.state?.sessionId) return;
+        if (!slot.messages.length && !slot.isStreaming) return;
+
+        const firstUserMessage = slot.messages.find(m => m.role === 'user')?.content
+          ?.find(c => c.type === 'text')?.text;
+        
+        const label = slot.state.sessionName || firstUserMessage || 'Conversation';
+        const latestTimestamp = slot.messages.length > 0
+          ? Math.max(...slot.messages.map(m => m.timestamp || 0))
+          : Date.now();
+
+        sessionMap.set(slot.state.sessionId, {
+          sessionId: slot.state.sessionId,
+          sessionPath: slot.state.sessionFile,
+          label,
+          updatedAt: latestTimestamp,
+        });
+      });
+
+      // Add workspace sessions
+      workspace.sessions.forEach((session) => {
         if (session.messageCount <= 0) return;
+        if (sessionMap.has(session.id)) return;
+        
         const label = session.name
           || (session.firstMessage && session.firstMessage !== '(no messages)' ? session.firstMessage : null)
           || 'Conversation';
+          
         sessionMap.set(session.id, {
           sessionId: session.id,
           sessionPath: session.path,
@@ -1167,50 +730,27 @@ function App() {
         });
       });
 
-      // Add sessions from slots (only those with content)
-      Object.entries(convData.slots).forEach(([, slot]) => {
-        if (!slot.sessionId) return;
-        if (!slot.hasMessages && !slot.isStreaming) return;
-
-        const existing = sessionMap.get(slot.sessionId);
-        if (existing) {
-          if (!existing.sessionPath && slot.sessionFile) {
-            existing.sessionPath = slot.sessionFile;
-          }
-          return;
-        }
-
-        const label = slot.sessionName || slot.firstUserMessage || 'Conversation';
-        sessionMap.set(slot.sessionId, {
-          sessionId: slot.sessionId,
-          sessionPath: slot.sessionFile,
-          label,
-          updatedAt: slot.latestTimestamp || Date.now(),
-        });
-      });
-
       const conversations = [...sessionMap.values()]
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((session) => {
-          const slotInfo = sessionSlotInfo.get(session.sessionId);
-          // Get the first slotId associated with this session
-          const slotId = slotInfo?.slotIds[0];
-          const tabInfo = slotId ? slotMap.get(slotId) : null;
+          // Find if this session is in an active tab
+          const tabWithSession = tabs.find(t => t.sessionId === session.sessionId);
           const isFocused = Boolean(
             isActive
-            && tabInfo
-            && activeTabForWorkspace
-            && tabInfo.tabId === activeTabForWorkspace
-            && tabInfo.paneId === panes.focusedPaneId
+            && tabWithSession
+            && tabWithSession.id === activeTabId
           );
-          // Read live streaming state directly from workspace.slots (not from cached slotInfo)
-          // This ensures the sidebar updates immediately when streaming starts/stops
-          const isStreaming = slotInfo?.slotIds.some((id) => workspace.slots[id]?.isStreaming) ?? false;
+          
+          // Check if any slot with this session is streaming
+          const isStreaming = Object.values(workspace.slots).some(
+            slot => slot.state?.sessionId === session.sessionId && slot.isStreaming
+          );
+          
           return {
             sessionId: session.sessionId,
             sessionPath: session.sessionPath,
             label: session.label,
-            slotId,
+            slotId: tabWithSession?.slotId,
             isFocused,
             isStreaming,
           };
@@ -1223,11 +763,10 @@ function App() {
         isActive,
         isStreaming,
         needsAttention: needsAttention.has(workspace.id),
-        panes: [],
         conversations,
       };
     });
-  }, [ws.workspaces, ws.activeWorkspaceId, ws.paneTabsByWorkspace, ws.activePaneTabByWorkspace, needsAttention, panes.focusedPaneId, slotToTabByWorkspace, workspaceConversationData]);
+  }, [ws.workspaces, ws.activeWorkspaceId, ws.paneTabsByWorkspace, activeTabId, needsAttention]);
 
   const workspaceRailItems = useMemo(() => ws.workspaces.map((workspace) => ({
     id: workspace.id,
@@ -1244,11 +783,11 @@ function App() {
 
   const SETTINGS_TAB_ID = '__settings__';
 
-  // Not memoized — needs to react to isSettingsOpen changes immediately
+  // Build tab bar tabs
   const baseTabs = activeWorkspaceTabs.map((tab) => {
-    if (!ws.activeWorkspace) return { id: tab.id, label: tab.label, isActive: false, isStreaming: false };
-    const tabPanes = collectPaneNodes(tab.layout);
-    const isStreaming = tabPanes.some((pane) => ws.activeWorkspace?.slots[pane.slotId]?.isStreaming);
+    if (!ws.activeWorkspace) return { id: tab.id, label: 'Tab', isActive: false, isStreaming: false };
+    const slot = ws.activeWorkspace.slots[tab.slotId];
+    const isStreaming = slot?.isStreaming || false;
     return {
       id: tab.id,
       label: tab.label,
@@ -1256,13 +795,13 @@ function App() {
       isStreaming,
     };
   });
+  
   const tabBarTabs = isSettingsOpen
     ? [...baseTabs, { id: SETTINGS_TAB_ID, label: '⚙ Settings', isActive: true, isStreaming: false }]
     : baseTabs;
 
   const handleSelectTab = useCallback((tabId: string) => {
-    if (tabId === SETTINGS_TAB_ID) return; // already on settings
-    // Clicking a real tab closes settings if open
+    if (tabId === SETTINGS_TAB_ID) return;
     if (isSettingsOpen) closeSettings();
     if (!ws.activeWorkspace) return;
     const workspacePath = ws.activeWorkspace.path;
@@ -1277,19 +816,16 @@ function App() {
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
     const newTabId = createTabId();
     const newSlotId = createSlotId();
-    const newPaneId = createPaneId();
     const newTab: PaneTabPageState = {
       id: newTabId,
       label: 'New Conversation',
-      layout: createSinglePaneLayout(newSlotId, newPaneId),
-      focusedPaneId: newPaneId,
+      slotId: newSlotId,
     };
     ws.createSessionSlotForWorkspace(ws.activeWorkspace.id, newSlotId);
     ws.setPaneTabsForWorkspace(workspacePath, [...tabs, newTab], newTabId);
   }, [ws.activeWorkspace, ws.createSessionSlotForWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
   const handleCloseTab = useCallback((tabId: string) => {
-    // Closing the settings tab just closes settings
     if (tabId === SETTINGS_TAB_ID) {
       closeSettings();
       return;
@@ -1299,7 +835,6 @@ function App() {
     const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
 
     if (tabs.length <= 1) {
-      // Closing the last tab: remove it and show welcome state (no zombie tabs)
       ws.setPaneTabsForWorkspace(workspacePath, [], '');
       return;
     }
@@ -1307,7 +842,7 @@ function App() {
     const nextTabs = tabs.filter((tab) => tab.id !== tabId);
     const nextActive = tabId === activeTabId ? nextTabs[0].id : activeTabId || nextTabs[0].id;
     ws.setPaneTabsForWorkspace(workspacePath, nextTabs, nextActive);
-  }, [activeTabId, ws.activeWorkspace, ws.createSessionSlotForWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
+  }, [activeTabId, ws.activeWorkspace, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
   const handleRenameTab = useCallback((tabId: string, label: string) => {
     if (tabId === SETTINGS_TAB_ID) return;
@@ -1333,68 +868,24 @@ function App() {
 
   const handleSelectActiveConversation = useCallback((sessionId: string, sessionPath?: string, _slotId?: string, label?: string) => {
     if (!ws.activeWorkspaceId) return;
-    // Note: We intentionally don't pass slotId here. The sidebar should load
-    // conversations in the current/new tab context, not jump to wherever the
-    // slot happens to be. Passing slotId would cause the UI to switch to the
-    // existing tab containing that slot, which is annoying when browsing conversations.
     handleSelectConversation(ws.activeWorkspaceId, sessionId, sessionPath, undefined, label);
   }, [handleSelectConversation, ws.activeWorkspaceId]);
 
-  // REMOVED: No longer auto-creating "Tab 1" - show welcome state instead when no tabs
+  // Ensure slots are created for tabs
   useEffect(() => {
     ws.workspaces.forEach((workspace) => {
       const workspacePath = workspace.path;
       const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
-      // Don't create default tab - let user explicitly create conversations
-      const storedActive = ws.activePaneTabByWorkspace[workspacePath];
-      if ((!storedActive || !tabs.some((tab) => tab.id === storedActive)) && tabs.length > 0) {
-        ws.setPaneTabsForWorkspace(workspacePath, tabs, tabs[0].id);
-      }
-    });
-  }, [ws.workspaces, ws.paneTabsByWorkspace, ws.activePaneTabByWorkspace, ws.setPaneTabsForWorkspace]);
-
-  useEffect(() => {
-    ws.workspaces.forEach((workspace) => {
-      const workspacePath = workspace.path;
-      const tabs = ws.paneTabsByWorkspace[workspacePath] || [];
-      const requested = sessionSlotRequestsRef.current[workspace.id] || new Set<string>();
-      sessionSlotRequestsRef.current[workspace.id] = requested;
+      const requested = sessionSlotListRequestedRef.current;
 
       tabs.forEach((tab) => {
-        collectPaneNodes(tab.layout).forEach((pane) => {
-          if (workspace.slots[pane.slotId]) {
-            requested.delete(pane.slotId);
-            return;
-          }
-          if (requested.has(pane.slotId)) return;
-          requested.add(pane.slotId);
-          ws.createSessionSlotForWorkspace(workspace.id, pane.slotId);
-        });
+        if (workspace.slots[tab.slotId]) return;
+        if (requested.has(tab.slotId)) return;
+        requested.add(tab.slotId);
+        ws.createSessionSlotForWorkspace(workspace.id, tab.slotId);
       });
     });
   }, [ws.workspaces, ws.paneTabsByWorkspace, ws.createSessionSlotForWorkspace]);
-
-  useEffect(() => {
-    ws.workspaces.forEach((workspace) => {
-      if (sessionSlotListRequestedRef.current.has(workspace.id)) return;
-      sessionSlotListRequestedRef.current.add(workspace.id);
-      ws.listSessionSlots(workspace.id);
-    });
-  }, [ws.workspaces, ws.listSessionSlots]);
-
-  useEffect(() => {
-    if (!activeWorkspacePath || !activeTabId || !activeTab) return;
-    const tabs = ws.paneTabsByWorkspace[activeWorkspacePath] || [];
-    const tabIndex = tabs.findIndex((tab) => tab.id === activeTabId);
-    if (tabIndex < 0) return;
-    const currentTab = tabs[tabIndex];
-    const layoutChanged = JSON.stringify(currentTab.layout) !== JSON.stringify(panes.layout);
-    const focusChanged = currentTab.focusedPaneId !== panes.focusedPaneId;
-    if (!layoutChanged && !focusChanged) return;
-    const nextTabs = [...tabs];
-    nextTabs[tabIndex] = { ...currentTab, layout: panes.layout, focusedPaneId: panes.focusedPaneId };
-    ws.setPaneTabsForWorkspace(activeWorkspacePath, nextTabs, activeTabId);
-  }, [activeWorkspacePath, activeTabId, activeTab, panes.layout, panes.focusedPaneId, ws.paneTabsByWorkspace, ws.setPaneTabsForWorkspace]);
 
   const activeWs = ws.activeWorkspace;
   const activeWorkspaceId = activeWs?.id ?? null;
@@ -1409,8 +900,7 @@ function App() {
     requestWorkspaceEntries(activeWorkspaceId, '');
   }, [ws.isConnected, activeWorkspaceId, hasRootEntries, isRightPaneOpen, requestWorkspaceEntries]);
 
-  // Memoized handlers for active workspace to prevent re-render loops in SidebarFileTree
-  // Use activeWorkspaceId (stable string) instead of activeWs (new object each render)
+  // Memoized handlers for active workspace
   const activeWorkspaceWatchDirectory = useCallback((path: string) => {
     if (activeWorkspaceId) {
       watchDirectory(activeWorkspaceId, path);
@@ -1444,13 +934,10 @@ function App() {
     );
   }
 
-  const focusedSlot = panes.focusedSlotId ? activeWs?.slots[panes.focusedSlotId] : null;
-
   // Get backend commands from focused slot
+  const focusedSlot = focusedSlotId ? activeWs?.slots[focusedSlotId] : null;
   const backendCommands = focusedSlot?.commands || [];
 
-  // On mobile, when keyboard is visible, we need to use fixed positioning
-  // to properly contain the app within the visual viewport
   const appContainerClasses = isMobile && isKeyboardVisible
     ? "fixed inset-0 bg-pi-bg flex flex-col font-mono"
     : "h-full bg-pi-bg flex flex-col font-mono";
@@ -1463,11 +950,7 @@ function App() {
   const rightPaneStyle = {
     width: `calc((100% - ${totalLeftWidth}px) * ${rightPaneRatio})`,
   };
-  const rightPaneHandleStyle = {
-    width: RIGHT_PANE_HANDLE_WIDTH,
-  };
   const showRightPane = !isMobile && Boolean(activeWs) && isRightPaneOpen;
-  const showRightPaneHandle = !isMobile && Boolean(activeWs) && !isRightPaneOpen;
 
   return (
     <div
@@ -1476,7 +959,6 @@ function App() {
         height: 'var(--viewport-height, 100%)',
         top: 'var(--viewport-offset, 0)',
       } : undefined}
-
     >
       {/* Directory browser modal */}
       {showBrowser && (
@@ -1494,8 +976,6 @@ function App() {
         />
       )}
 
-
-
       {/* Connection status banner */}
       <ConnectionStatus isConnected={ws.isConnected} error={ws.error} />
 
@@ -1505,8 +985,6 @@ function App() {
           <span className="text-pi-text">
             Update available: <span className="font-semibold text-pi-accent">v{ws.updateAvailable.latest}</span>
             <span className="text-pi-muted ml-1">(current: v{ws.updateAvailable.current})</span>
-            <span className="text-pi-muted ml-2">—</span>
-            <code className="ml-2 px-1.5 py-0.5 bg-pi-bg rounded text-pi-accent text-[12px]">npm install -g pi-deck@latest</code>
           </span>
           <button
             onClick={() => setUpdateDismissed(true)}
@@ -1567,9 +1045,6 @@ function App() {
               onCloseTab={handleCloseTab}
               onRenameTab={handleRenameTab}
               onReorderTabs={handleReorderTabs}
-              onSplitVertical={() => panes.split('vertical')}
-              onSplitHorizontal={() => panes.split('horizontal')}
-              canSplit={panes.panes.length < 4}
             />
           )}
 
@@ -1592,7 +1067,7 @@ function App() {
                     className={`p-3 transition-colors ${
                       isRightPaneOpen ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
                     }`}
-                    title="Toggle file pane (⌘⇧F)"
+                    title="Toggle file pane"
                   >
                     <FileText className="w-6 h-6" />
                   </button>
@@ -1603,54 +1078,35 @@ function App() {
 
           {/* Main content area */}
           {!activeWs ? (
-            // Empty state - no workspace
             <div className="flex-1 flex flex-col items-center justify-center text-pi-muted">
               <p className="mb-4">No workspace open</p>
               <button
                 onClick={() => setShowBrowser(true)}
                 className="px-4 py-2 border border-pi-border text-pi-text hover:border-pi-accent transition-colors"
               >
-                Open directory {!isMobile && '(⌘O)'}
+                Open directory
               </button>
             </div>
           ) : activeWorkspaceTabs.length === 0 ? (
-            // Welcome state - workspace open but no tabs
             <div className="flex-1 flex flex-col items-center justify-center text-pi-muted">
               <p className="text-lg mb-2">No conversations open</p>
               <p className="text-sm mb-6">Select a conversation from the sidebar or start a new one</p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    // Create new conversation tab
-                    const newTabId = createTabId();
-                    const newSlotId = createSlotId();
-                    const newPaneId = createPaneId();
-                    const newTab: PaneTabPageState = {
-                      id: newTabId,
-                      label: 'New Conversation',
-                      sessionId: null,
-                      slotId: newSlotId,
-                      layout: createSinglePaneLayout(newSlotId, newPaneId),
-                      focusedPaneId: newPaneId,
-                    };
-                    ws.createSessionSlotForWorkspace(activeWs.id, newSlotId);
-                    ws.setPaneTabsForWorkspace(activeWs.path, [newTab], newTabId);
-                  }}
-                  className="px-4 py-2 bg-pi-accent text-white rounded hover:bg-pi-accent/90 transition-colors"
-                >
-                  New Conversation
-                </button>
-                <button
-                  onClick={() => {
-                    // Focus the sidebar to select a conversation
-                    const sidebarButton = document.querySelector('[data-sidebar-toggle]') as HTMLButtonElement;
-                    sidebarButton?.click();
-                  }}
-                  className="px-4 py-2 border border-pi-border text-pi-text hover:border-pi-accent transition-colors"
-                >
-                  Browse Conversations
-                </button>
-              </div>
+              <button
+                onClick={() => {
+                  const newTabId = createTabId();
+                  const newSlotId = createSlotId();
+                  const newTab: PaneTabPageState = {
+                    id: newTabId,
+                    label: 'New Conversation',
+                    slotId: newSlotId,
+                  };
+                  ws.createSessionSlotForWorkspace(activeWs.id, newSlotId);
+                  ws.setPaneTabsForWorkspace(activeWs.path, [newTab], newTabId);
+                }}
+                className="px-4 py-2 bg-pi-accent text-white rounded hover:bg-pi-accent/90 transition-colors"
+              >
+                New Conversation
+              </button>
             </div>
           ) : isSettingsOpen ? (
             <Settings
@@ -1662,7 +1118,7 @@ function App() {
               models={activeWs.models}
               scopedModels={settingsScopedModels}
               onSaveScopedModels={(models) => {
-                const slotId = panes.focusedSlotId || 'default';
+                const slotId = focusedSlotId || 'default';
                 ws.setScopedModels(slotId, models);
               }}
               startupInfo={activeWs.startupInfo || null}
@@ -1672,89 +1128,69 @@ function App() {
               onSetDefaultJobLocation={(path) => ws.updateJobConfig({ defaultLocation: path })}
               onReorderJobLocations={(paths) => ws.updateJobConfig({ locations: paths })}
             />
-          ) : (
-            <PaneManager
-              layout={isMobile 
-                ? { 
-                    type: 'pane', 
-                    id: panes.panes[mobilePaneIndex]?.id || 'default', 
-                    slotId: panes.panes[mobilePaneIndex]?.sessionSlotId || 'default' 
-                  } 
-                : panes.layout
-              }
-              workspace={activeWs}
-              focusedPaneId={panes.focusedPaneId}
+          ) : tab?.slot ? (
+            <SessionView
+              slot={tab.slot}
+              slotId={tab.slotId}
               sessions={activeWs.sessions}
               models={activeWs.models}
               backendCommands={backendCommands}
-              onFocusPane={panes.focusPane}
-              onSplit={panes.split}
-              onClosePane={handleClosePane}
-              onResizeNode={panes.resizeNode}
-              onSendPrompt={(slotId, message, images) => ws.sendPrompt(slotId, message, images)}
-              onSteer={(slotId, message, images) => ws.steer(slotId, message, images)}
-              onAbort={(slotId) => ws.abort(slotId)}
-              onLoadSession={(slotId, sessionId) => {
-                if (!activeWorkspaceId) return;
-                const targetSession = resolveSessionPath(activeWorkspaceId, sessionId);
-                if (!targetSession) {
-                  console.warn('[App] Missing session path for switchSession', { workspaceId: activeWorkspaceId, sessionId });
-                  return;
-                }
-                ws.switchSession(slotId, targetSession);
+              onSendPrompt={(message, images) => ws.sendPrompt(tab.slotId, message, images)}
+              onSteer={(message, images) => ws.steer(tab.slotId, message, images)}
+              onAbort={() => ws.abort(tab.slotId)}
+              onLoadSession={(sessionId) => {
+                const targetSession = activeWs.sessions.find(s => s.id === sessionId)?.path || sessionId;
+                ws.switchSession(tab.slotId, targetSession);
               }}
-              onNewSession={(slotId) => ws.newSession(slotId)}
-              onGetForkMessages={(slotId) => {
-                ws.getForkMessages(slotId);
+              onNewSession={() => ws.newSession(tab.slotId)}
+              onGetForkMessages={() => ws.getForkMessages(tab.slotId)}
+              onFork={(entryId) => ws.fork(tab.slotId, entryId)}
+              onSetModel={(provider, modelId) => ws.setModel(tab.slotId, provider, modelId)}
+              onSetThinkingLevel={(level) => ws.setThinkingLevel(tab.slotId, level)}
+              onQuestionnaireResponse={(toolCallId, response) => {
+                ws.sendQuestionnaireResponse(tab.slotId, toolCallId, response);
               }}
-              onFork={(slotId, entryId) => ws.fork(slotId, entryId)}
-              onSetModel={(slotId, provider, modelId) => ws.setModel(slotId, provider, modelId)}
-              onSetThinkingLevel={(slotId, level) => ws.setThinkingLevel(slotId, level)}
-              onQuestionnaireResponse={handleQuestionnaireResponse}
-              onExtensionUIResponse={(slotId, response) => ws.sendExtensionUIResponse(slotId, response)}
-              onCustomUIInput={(slotId, input) => ws.sendCustomUIInput(slotId, input)}
-              onCompact={(slotId) => ws.compact(slotId)}
+              onExtensionUIResponse={(response) => ws.sendExtensionUIResponse(tab.slotId, response)}
+              onCustomUIInput={(input) => ws.sendCustomUIInput(tab.slotId, input)}
+              onCompact={() => ws.compact(tab.slotId)}
               onOpenSettings={openSettings}
-              onExport={(slotId) => ws.exportHtml(slotId)}
-              onRenameSession={(slotId, name) => ws.setSessionName(slotId, name)}
+              onExport={() => ws.exportHtml(tab.slotId)}
+              onRenameSession={(name) => ws.setSessionName(tab.slotId, name)}
               onShowHotkeys={() => openSettings('keyboard')}
-              onFollowUp={(slotId, message) => ws.followUp(slotId, message)}
+              onFollowUp={(message) => ws.followUp(tab.slotId, message)}
               onReload={handleDeploy}
-              // New features
-              onGetSessionTree={(slotId) => ws.getSessionTree(slotId)}
-              onNavigateTree={(slotId, targetId) => ws.navigateTree(slotId, targetId)}
-              onCopyLastAssistant={(slotId) => ws.copyLastAssistant(slotId)}
-              onGetQueuedMessages={(slotId) => ws.getQueuedMessages(slotId)}
-              onClearQueue={(slotId) => ws.clearQueue(slotId)}
-              onListFiles={(_slotId, query, requestId) => ws.listFiles(query, undefined, requestId)}
-              onExecuteBash={(slotId, command, excludeFromContext) => {
-                ws.executeBash(slotId, command, excludeFromContext);
+              onGetSessionTree={() => ws.getSessionTree(tab.slotId)}
+              onNavigateTree={(targetId) => ws.navigateTree(tab.slotId, targetId)}
+              onCopyLastAssistant={() => ws.copyLastAssistant(tab.slotId)}
+              onGetQueuedMessages={() => ws.getQueuedMessages(tab.slotId)}
+              onListFiles={(query, requestId) => ws.listFiles(query, undefined, requestId)}
+              onExecuteBash={(command, excludeFromContext) => {
+                ws.executeBash(tab.slotId, command, excludeFromContext);
               }}
-
               onToggleAllToolsCollapsed={() => setAllToolsCollapsed(prev => !prev)}
               onToggleAllThinkingCollapsed={() => setAllThinkingCollapsed(prev => !prev)}
-
               activePlan={ws.activePlanByWorkspace[activeWs.id] ?? null}
               onUpdatePlanTask={ws.updatePlanTask}
               onDeactivatePlan={ws.deactivatePlan}
               activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
               onUpdateJobTask={ws.updateJobTask}
             />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-pi-muted">
+              Loading...
+            </div>
           )}
         </div>
 
-        {showRightPaneHandle && (
+        {/* Right panel handle when closed */}
+        {!isMobile && activeWs && !isRightPaneOpen && (
           <div
-            className="flex-shrink-0 border-l border-pi-border bg-pi-surface flex flex-col items-center pt-2"
-            style={rightPaneHandleStyle}
+            className="flex-shrink-0 border-l border-pi-border bg-pi-surface flex flex-col items-center py-2 cursor-pointer hover:bg-pi-bg"
+            style={{ width: 32 }}
+            onClick={toggleRightPane}
+            title="Show file pane (⌘⇧F)"
           >
-            <button
-              onClick={toggleRightPane}
-              className="rounded p-1 text-pi-muted hover:text-pi-text hover:bg-pi-bg transition-colors"
-              title="Show file pane (⌘⇧F)"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
+            <FileText className="w-4 h-4 text-pi-muted" />
           </div>
         )}
 
@@ -1886,7 +1322,6 @@ function App() {
           />
         </div>
       )}
-
     </div>
   );
 }
