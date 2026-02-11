@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback, useEffect, useMemo, memo, type CSSProperties, type MouseEvent, type KeyboardEvent } from 'react';
-import { MoreHorizontal, MessageSquare, FolderTree, PanelLeftClose, Briefcase } from 'lucide-react';
-import type { FileInfo, GitStatusFile, ActiveJobState, JobPhase } from '@pi-deck/shared';
+import { useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent, type KeyboardEvent } from 'react';
+import { MoreHorizontal, MessageSquare, FolderTree, PanelLeftClose } from 'lucide-react';
+import type { FileInfo, GitStatusFile } from '@pi-deck/shared';
 import { SidebarFileTree } from './SidebarFileTree';
 
 interface ConversationSummary {
@@ -33,7 +33,6 @@ interface ConversationSidebarProps {
   // File watching props (for files section)
   onWatchDirectory?: (path: string) => void;
   onUnwatchDirectory?: (path: string) => void;
-  activeJobs?: ActiveJobState[];
   onCollapseSidebar?: () => void;
   className?: string;
   style?: CSSProperties;
@@ -62,7 +61,6 @@ export const ConversationSidebar = memo(function ConversationSidebar({
   onSelectGitFile,
   selectedFilePath,
   openFilePath,
-  activeJobs,
   onWatchDirectory,
   onUnwatchDirectory,
   onCollapseSidebar,
@@ -111,25 +109,6 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   }, [ratios]);
-
-  // Map slotId → active job for quick lookup
-  const jobBySlotId = useMemo(() => {
-    if (!activeJobs || activeJobs.length === 0) return new Map<string, ActiveJobState>();
-    const map = new Map<string, ActiveJobState>();
-    for (const job of activeJobs) {
-      if (job.sessionSlotId) map.set(job.sessionSlotId, job);
-    }
-    return map;
-  }, [activeJobs]);
-
-  const JOB_PHASE_COLORS: Record<JobPhase, string> = {
-    executing: 'text-pi-success',
-    planning: 'text-pi-warning',
-    review: 'text-pi-accent',
-    ready: 'text-pi-accent',
-    backlog: 'text-pi-muted',
-    complete: 'text-pi-muted',
-  };
 
   // Focus the inline rename input when it appears
   useEffect(() => {
@@ -272,9 +251,6 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                       >
                         {conversation.isStreaming && (
                           <span className="w-2 h-2 rounded-full bg-pi-success status-running flex-shrink-0" />
-                        )}
-                        {conversation.slotId && jobBySlotId.has(conversation.slotId) && (
-                          <Briefcase className={`w-3 h-3 flex-shrink-0 ${JOB_PHASE_COLORS[jobBySlotId.get(conversation.slotId)!.phase]}`} />
                         )}
                         <span className="truncate">{conversation.label}</span>
                       </button>

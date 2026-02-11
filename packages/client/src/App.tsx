@@ -1032,7 +1032,6 @@ function App() {
               onSelectGitFile={handleSelectGitFile}
               selectedFilePath={activeWs ? (selectedFilePathByWorkspace[activeWs.id] || '') : ''}
               openFilePath={activeWs ? openFilePathByWorkspace[activeWs.id] : undefined}
-              activeJobs={activeWs ? (ws.activeJobsByWorkspace[activeWs.id] || []) : undefined}
               onWatchDirectory={activeWs ? activeWorkspaceWatchDirectory : undefined}
               onUnwatchDirectory={activeWs ? activeWorkspaceUnwatchDirectory : undefined}
               className="h-full"
