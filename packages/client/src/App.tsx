@@ -1823,7 +1823,7 @@ function App() {
         <>
           {/* Conversations panel - instant show/hide */}
           {mobileActivePanel === 'conversations' && (
-            <div className="fixed inset-y-0 left-0 z-40 w-full bg-pi-surface">
+            <div className="fixed top-0 bottom-14 left-0 z-40 w-full bg-pi-surface">
               <MobileSidebar
                 workspaces={sidebarWorkspaces}
                 activeWorkspaceId={ws.activeWorkspaceId}
@@ -1862,7 +1862,7 @@ function App() {
 
           {/* Tools panel - instant show/hide */}
           {mobileActivePanel === 'tools' && (
-            <div className="fixed inset-y-0 right-0 z-40 w-full bg-pi-surface">
+            <div className="fixed top-0 bottom-14 right-0 z-40 w-full bg-pi-surface">
               <WorkspaceFilesPane
                 className="h-full w-full"
                 workspaceName={activeWs.name}
