@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { ChevronLeft, X, Menu } from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { usePanes } from './hooks/usePanes';
 import { useNotifications } from './hooks/useNotifications';
@@ -105,7 +105,7 @@ function App() {
   const [_allToolsCollapsed, setAllToolsCollapsed] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_allThinkingCollapsed, setAllThinkingCollapsed] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
   const [pendingPaneFocus, setPendingPaneFocus] = useState<{ workspaceId: string; tabId: string; paneId: string } | null>(null);
   const [pendingSlotAttach, setPendingSlotAttach] = useState<{ workspaceId: string; tabId: string; paneId: string; slotId: string } | null>(null);
   const [pendingSessionLoad, setPendingSessionLoad] = useState<{
@@ -144,6 +144,9 @@ function App() {
   
   // Mobile pane index - tracks which pane is shown on mobile (separate from focusedPaneId)
   const [mobilePaneIndex, setMobilePaneIndex] = useState(0);
+  
+  // Mobile active panel - 'conversations' | 'chat' | 'accessories'
+  const [mobileActivePanel, setMobileActivePanel] = useState<'conversations' | 'chat' | 'accessories'>('chat');
   
   // Job locations state
   const [jobLocations, setJobLocations] = useState<Array<{ path: string; isDefault: boolean; displayName: string }>>([]);
@@ -933,7 +936,7 @@ function App() {
   const handleSelectWorkspace = useCallback((workspaceId: string) => {
     ws.setActiveWorkspace(workspaceId);
     if (isMobile) {
-      setIsMobileSidebarOpen(false);
+      setMobileActivePanel('chat');
     }
   }, [ws, isMobile]);
 
@@ -1349,9 +1352,9 @@ function App() {
     // slot happens to be. Passing slotId would cause the UI to switch to the
     // existing tab containing that slot, which is annoying when browsing conversations.
     handleSelectConversation(ws.activeWorkspaceId, sessionId, sessionPath, undefined, label);
-    // Close mobile sidebar after selecting conversation
+    // Switch to chat panel after selecting conversation
     if (isMobile) {
-      setIsMobileSidebarOpen(false);
+      setMobileActivePanel('chat');
     }
   }, [handleSelectConversation, ws.activeWorkspaceId, isMobile]);
 
@@ -1600,13 +1603,6 @@ function App() {
 
           {isMobile && !activeWs && (
             <div className="flex items-center justify-between border-b border-pi-border px-2 py-1 safe-area-top">
-              <button
-                onClick={() => setIsMobileSidebarOpen(true)}
-                className="p-3 text-pi-muted hover:text-pi-text transition-colors"
-                title="Menu"
-              >
-                <Menu className="w-6 h-6" />
-              </button>
               <div className="flex-1 text-center text-[15px] text-pi-text truncate px-2">
                 No workspace
               </div>
@@ -1757,9 +1753,8 @@ function App() {
           {/* Mobile bottom toolbar */}
           {isMobile && activeWs && (
             <MobileBottomToolbar
-              onOpenSidebar={() => setIsMobileSidebarOpen(true)}
-              onToggleFilePane={toggleRightPane}
-              isFilePaneOpen={isRightPaneOpen}
+              activePanel={mobileActivePanel}
+              onSelectPanel={setMobileActivePanel}
             />
           )}
         </div>
@@ -1831,96 +1826,99 @@ function App() {
         )}
       </div>
 
-      {isMobile && isMobileSidebarOpen && (
-        <div className="fixed inset-0 z-40 flex">
+      {/* Mobile 3-panel layout */}
+      {isMobile && activeWs && (
+        <>
+          {/* Conversations panel - slides from left */}
           <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setIsMobileSidebarOpen(false)}
-          />
-          <MobileSidebar
-            workspaces={sidebarWorkspaces}
-            activeWorkspaceId={ws.activeWorkspaceId}
-            conversations={activeConversations}
-            entriesByPath={activeWs ? (workspaceEntries[activeWs.id] || {}) : undefined}
-            gitStatusFiles={activeWs ? (workspaceGitStatus[activeWs.id] || []) : undefined}
-            gitBranch={activeWs ? (workspaceGitBranch[activeWs.id] ?? null) : null}
-            gitWorktree={activeWs ? (workspaceGitWorktree[activeWs.id] ?? null) : null}
-            selectedFilePath={activeWs ? (selectedFilePathByWorkspace[activeWs.id] || '') : ''}
-            openFilePath={activeWs ? openFilePathByWorkspace[activeWs.id] : undefined}
-            activeJobs={activeWs ? (ws.activeJobsByWorkspace[activeWs.id] || []) : undefined}
-            onSelectWorkspace={handleSelectWorkspace}
-            onCloseWorkspace={ws.closeWorkspace}
-            onSelectConversation={handleSelectActiveConversation}
-            onRenameConversation={handleRenameActiveConversation}
-            onDeleteConversation={handleDeleteActiveConversation}
-            onRequestEntries={activeWs ? activeWorkspaceRequestEntries : undefined}
-            onRequestGitStatus={activeWs ? activeWorkspaceRequestGitStatus : undefined}
-            onSelectFile={handleSelectFile}
-            onSelectGitFile={handleSelectGitFile}
-            onWatchDirectory={activeWs ? activeWorkspaceWatchDirectory : undefined}
-            onUnwatchDirectory={activeWs ? activeWorkspaceUnwatchDirectory : undefined}
-            onOpenBrowser={() => {
-              setShowBrowser(true);
-              setIsMobileSidebarOpen(false);
-            }}
-            onOpenSettings={() => {
-              openSettings();
-              setIsMobileSidebarOpen(false);
-            }}
-            onClose={() => setIsMobileSidebarOpen(false)}
-            className="relative z-10 w-full max-w-sm"
-          />
-        </div>
-      )}
+            className={`fixed inset-y-0 left-0 z-40 w-full bg-pi-surface transform transition-transform duration-300 ${
+              mobileActivePanel === 'conversations' ? 'translate-x-0' : '-translate-x-full'
+            }`}
+          >
+            <MobileSidebar
+              workspaces={sidebarWorkspaces}
+              activeWorkspaceId={ws.activeWorkspaceId}
+              conversations={activeConversations}
+              entriesByPath={workspaceEntries[activeWs.id] || {}}
+              gitStatusFiles={workspaceGitStatus[activeWs.id] || []}
+              gitBranch={workspaceGitBranch[activeWs.id] ?? null}
+              gitWorktree={workspaceGitWorktree[activeWs.id] ?? null}
+              selectedFilePath={selectedFilePathByWorkspace[activeWs.id] || ''}
+              openFilePath={openFilePathByWorkspace[activeWs.id]}
+              activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
+              onSelectWorkspace={handleSelectWorkspace}
+              onCloseWorkspace={ws.closeWorkspace}
+              onSelectConversation={handleSelectActiveConversation}
+              onRenameConversation={handleRenameActiveConversation}
+              onDeleteConversation={handleDeleteActiveConversation}
+              onRequestEntries={activeWorkspaceRequestEntries}
+              onRequestGitStatus={activeWorkspaceRequestGitStatus}
+              onSelectFile={handleSelectFile}
+              onSelectGitFile={handleSelectGitFile}
+              onWatchDirectory={activeWorkspaceWatchDirectory}
+              onUnwatchDirectory={activeWorkspaceUnwatchDirectory}
+              onOpenBrowser={() => {
+                setShowBrowser(true);
+                setMobileActivePanel('chat');
+              }}
+              onOpenSettings={() => {
+                openSettings();
+                setMobileActivePanel('chat');
+              }}
+              onClose={() => setMobileActivePanel('chat')}
+              className="h-full w-full"
+            />
+          </div>
 
-      {isMobile && activeWs && isRightPaneOpen && (
-        <div className="fixed inset-0 z-40 flex justify-end">
+          {/* Accessories panel - slides from right */}
           <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => ws.setWorkspaceRightPaneOpen(activeWs.path, false)}
-          />
-          <WorkspaceFilesPane
-            className="relative z-10 h-full w-full"
-            workspaceName={activeWs.name}
-            workspaceId={activeWs.id}
-            workspacePath={activeWs.path}
-            selectedFilePath={selectedFilePathByWorkspace[activeWs.id] || ''}
-            fileContentsByPath={workspaceFileContents[activeWs.id] || {}}
-            fileDiffsByPath={workspaceFileDiffs[activeWs.id] || {}}
-            onRequestFile={(path) => requestWorkspaceFile(activeWs.id, path)}
-            onRequestFileDiff={(path) => requestFileDiff(activeWs.id, path)}
-            viewMode={viewModeByWorkspace[activeWs.id] || 'file'}
-            activePlan={ws.activePlanByWorkspace[activeWs.id] ?? null}
-            onGetPlans={ws.getPlans}
-            onGetPlanContent={ws.getPlanContent}
-            onSavePlan={ws.savePlan}
-            onActivatePlan={ws.activatePlan}
-            onDeactivatePlan={ws.deactivatePlan}
-            onUpdatePlanTask={ws.updatePlanTask}
-            activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
-            onGetJobs={ws.getJobs}
-            onGetJobContent={ws.getJobContent}
-            onGetJobLocations={ws.getJobLocations}
-            onCreateJob={ws.createJob}
-            onSaveJob={ws.saveJob}
-            onPromoteJob={ws.promoteJob}
-            onDemoteJob={ws.demoteJob}
-            onUpdateJobTask={ws.updateJobTask}
-            onDeleteJob={ws.deleteJob}
-            onRenameJob={ws.renameJob}
-            onArchiveJob={ws.archiveJob}
-            onUnarchiveJob={ws.unarchiveJob}
-            onGetArchivedJobs={ws.getArchivedJobs}
-            onStartJobConversation={ws.startJobConversation}
-            onNavigateToSlot={handleNavigateToSlot}
-            onTogglePane={toggleRightPane}
-            onAddJobAttachment={ws.addJobAttachment}
-            onRemoveJobAttachment={ws.removeJobAttachment}
-            onReadJobAttachment={ws.readJobAttachment}
-            onBrowseJobDirectory={ws.browseJobDirectory}
-            onAddJobLocation={ws.addJobLocation}
-          />
-        </div>
+            className={`fixed inset-y-0 right-0 z-40 w-full bg-pi-surface transform transition-transform duration-300 ${
+              mobileActivePanel === 'accessories' ? 'translate-x-0' : 'translate-x-full'
+            }`}
+          >
+            <WorkspaceFilesPane
+              className="h-full w-full"
+              workspaceName={activeWs.name}
+              workspaceId={activeWs.id}
+              workspacePath={activeWs.path}
+              selectedFilePath={selectedFilePathByWorkspace[activeWs.id] || ''}
+              fileContentsByPath={workspaceFileContents[activeWs.id] || {}}
+              fileDiffsByPath={workspaceFileDiffs[activeWs.id] || {}}
+              onRequestFile={(path) => requestWorkspaceFile(activeWs.id, path)}
+              onRequestFileDiff={(path) => requestFileDiff(activeWs.id, path)}
+              viewMode={viewModeByWorkspace[activeWs.id] || 'file'}
+              activePlan={ws.activePlanByWorkspace[activeWs.id] ?? null}
+              onGetPlans={ws.getPlans}
+              onGetPlanContent={ws.getPlanContent}
+              onSavePlan={ws.savePlan}
+              onActivatePlan={ws.activatePlan}
+              onDeactivatePlan={ws.deactivatePlan}
+              onUpdatePlanTask={ws.updatePlanTask}
+              activeJobs={ws.activeJobsByWorkspace[activeWs.id] || []}
+              onGetJobs={ws.getJobs}
+              onGetJobContent={ws.getJobContent}
+              onGetJobLocations={ws.getJobLocations}
+              onCreateJob={ws.createJob}
+              onSaveJob={ws.saveJob}
+              onPromoteJob={ws.promoteJob}
+              onDemoteJob={ws.demoteJob}
+              onUpdateJobTask={ws.updateJobTask}
+              onDeleteJob={ws.deleteJob}
+              onRenameJob={ws.renameJob}
+              onArchiveJob={ws.archiveJob}
+              onUnarchiveJob={ws.unarchiveJob}
+              onGetArchivedJobs={ws.getArchivedJobs}
+              onStartJobConversation={ws.startJobConversation}
+              onNavigateToSlot={handleNavigateToSlot}
+              onTogglePane={() => setMobileActivePanel('chat')}
+              onAddJobAttachment={ws.addJobAttachment}
+              onRemoveJobAttachment={ws.removeJobAttachment}
+              onReadJobAttachment={ws.readJobAttachment}
+              onBrowseJobDirectory={ws.browseJobDirectory}
+              onAddJobLocation={ws.addJobLocation}
+            />
+          </div>
+        </>
       )}
 
     </div>

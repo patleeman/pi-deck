@@ -1,35 +1,48 @@
-import { Menu, FileText } from 'lucide-react';
+import { MessageSquare, FolderTree, Briefcase } from 'lucide-react';
+
+type MobilePanel = 'conversations' | 'chat' | 'accessories';
 
 interface MobileBottomToolbarProps {
-  onOpenSidebar: () => void;
-  onToggleFilePane: () => void;
-  isFilePaneOpen: boolean;
+  activePanel: MobilePanel;
+  onSelectPanel: (panel: MobilePanel) => void;
 }
 
 export function MobileBottomToolbar({
-  onOpenSidebar,
-  onToggleFilePane,
-  isFilePaneOpen,
+  activePanel,
+  onSelectPanel,
 }: MobileBottomToolbarProps) {
   return (
     <div className="flex items-center justify-around h-14 border-t border-pi-border bg-pi-surface safe-area-bottom">
       <button
-        onClick={onOpenSidebar}
-        className="flex flex-col items-center justify-center flex-1 h-full text-pi-muted hover:text-pi-text transition-colors"
-        title="Menu"
+        onClick={() => onSelectPanel('conversations')}
+        className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
+          activePanel === 'conversations' ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
+        }`}
+        title="Conversations"
       >
-        <Menu className="w-6 h-6" />
-        <span className="text-[10px] mt-0.5">Menu</span>
+        <MessageSquare className="w-6 h-6" />
+        <span className="text-[10px] mt-0.5">Chats</span>
       </button>
       
       <button
-        onClick={onToggleFilePane}
+        onClick={() => onSelectPanel('chat')}
         className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
-          isFilePaneOpen ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
+          activePanel === 'chat' ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
         }`}
-        title="Files"
+        title="Chat"
       >
-        <FileText className="w-6 h-6" />
+        <Briefcase className="w-6 h-6" />
+        <span className="text-[10px] mt-0.5">Chat</span>
+      </button>
+      
+      <button
+        onClick={() => onSelectPanel('accessories')}
+        className={`flex flex-col items-center justify-center flex-1 h-full transition-colors ${
+          activePanel === 'accessories' ? 'text-pi-accent' : 'text-pi-muted hover:text-pi-text'
+        }`}
+        title="Accessories"
+      >
+        <FolderTree className="w-6 h-6" />
         <span className="text-[10px] mt-0.5">Files</span>
       </button>
     </div>
